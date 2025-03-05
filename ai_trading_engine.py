@@ -3,18 +3,8 @@ import numpy as np
 from typing import Dict, List, Tuple, Any
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor
 import ta
-
-# Importiere Keras mit Error Handling
-try:
-    from keras.models import Sequential
-    from keras.layers import LSTM, Dense, Dropout
-    from keras.optimizers import Adam
-    from keras.callbacks import EarlyStopping, ReduceLROnPlateau
-    KERAS_AVAILABLE = True
-except ImportError:
-    KERAS_AVAILABLE = False
-    logging.warning("Keras konnte nicht importiert werden. KI-Funktionen sind eingeschränkt.")
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +23,10 @@ class AITradingEngine:
         self.reddit_api = "https://www.reddit.com/r/solana"
         self.nitter_api = "https://nitter.net/search"
 
-        # Initialisiere Keras wenn verfügbar
-        if KERAS_AVAILABLE:
-            self._build_model()
-            logger.info("KI-Trading-Engine mit Keras initialisiert")
-        else:
-            logger.warning("KI-Trading-Engine läuft im eingeschränkten Modus ohne Keras")
+        logger.info("KI-Trading-Engine initialisiert mit scikit-learn")
 
     def prepare_features(self, price_data: pd.DataFrame) -> np.ndarray:
         """Bereitet Features für das ML-Modell vor"""
-        if not KERAS_AVAILABLE:
-            return np.array([])
-
         try:
             df = price_data.copy()
 
@@ -71,45 +53,21 @@ class AITradingEngine:
             # Entferne NaN-Werte
             df = df.fillna(method='ffill').fillna(method='bfill')
 
-            df_scaled = pd.DataFrame(
-                self.scaler.fit_transform(df[feature_columns]),
-                columns=feature_columns
-            )
-
-            # Erstelle Sequenzen
-            sequences = []
-            for i in range(len(df_scaled) - 60):
-                sequences.append(df_scaled.iloc[i:i+60].values)
-
-            return np.array(sequences)
+            return self.scaler.fit_transform(df[feature_columns])
 
         except Exception as e:
             logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")
             return np.array([])
 
     def _build_model(self):
-        """Erstellt das LSTM-Modell mit Keras"""
-        if not KERAS_AVAILABLE:
-            return
-
+        """Erstellt das Random Forest Modell"""
         try:
-            model = Sequential([
-                LSTM(128, return_sequences=True, input_shape=(60, 10)),
-                Dropout(0.3),
-                LSTM(64, return_sequences=False),
-                Dropout(0.3),
-                Dense(32, activation='relu'),
-                Dense(1, activation='linear')
-            ])
-
-            model.compile(
-                optimizer=Adam(learning_rate=0.001),
-                loss='huber',
-                metrics=['mae', 'mse']
+            self.model = RandomForestRegressor(
+                n_estimators=100,
+                max_depth=10,
+                random_state=42
             )
-
-            self.model = model
-            logger.info("LSTM Modell erfolgreich erstellt")
+            logger.info("Random Forest Modell erfolgreich erstellt")
 
         except Exception as e:
             logger.error(f"Fehler beim Erstellen des Models: {e}")
@@ -118,14 +76,16 @@ class AITradingEngine:
     def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
         """Sagt die nächste Kursbewegung vorher"""
         try:
-            if not KERAS_AVAILABLE or self.model is None:
+            if self.model is None:
+                self._build_model()
                 return self._predict_with_technical_analysis(current_data)
 
             X = self.prepare_features(current_data)
             if len(X) == 0:
                 return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
 
-            prediction = self.model.predict(X[-1:], verbose=0)
+            # Verwende die letzten Datenpunkte für die Vorhersage
+            prediction = self.model.predict(X[-1:])
             current_price = current_data['close'].iloc[-1]
             predicted_price = self.scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
 
@@ -214,47 +174,23 @@ class AITradingEngine:
             return 0.0
 
     def train_model(self, training_data: pd.DataFrame):
-        """Trainiert das LSTM-Modell"""
-        if not KERAS_AVAILABLE or self.model is None:
-            return
+        """Trainiert das Random Forest Modell"""
+        if self.model is None:
+            self._build_model()
 
         try:
-            X = self.prepare_features(training_data)
-            if len(X) == 0:
+            X = self.prepare_features(training_data[:-1])  # Alle außer dem letzten Datenpunkt
+            y = training_data['close'].iloc[1:].values  # Verschiebe um einen Zeitschritt
+
+            if len(X) == 0 or len(y) == 0:
+                logger.error("Keine Trainingsdaten verfügbar")
                 return
 
-            y = training_data['close'].iloc[60:].values
-            y_scaled = self.scaler.fit_transform(y.reshape(-1, 1))
-
-            callbacks = [
-                EarlyStopping(
-                    monitor='val_loss',
-                    patience=5,
-                    restore_best_weights=True,
-                    mode='min'
-                ),
-                ReduceLROnPlateau(
-                    monitor='val_loss',
-                    factor=0.5,
-                    patience=3,
-                    min_lr=0.0001
-                )
-            ]
-
-            self.model.fit(
-                X, y_scaled,
-                epochs=100,
-                batch_size=32,
-                validation_split=0.2,
-                callbacks=callbacks,
-                shuffle=True
-            )
-
+            self.model.fit(X, y)
             logger.info("Modell erfolgreich trainiert")
 
         except Exception as e:
             logger.error(f"Fehler beim Training: {e}")
-            raise
 
     async def fetch_market_data(self) -> Dict[str, Any]:
         """Holt erweiterte Marktdaten von verschiedenen Quellen"""
