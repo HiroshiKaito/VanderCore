@@ -17,6 +17,8 @@ class AutomatedSignalGenerator:
         self.bot = bot
         self.scheduler = BackgroundScheduler(timezone=pytz.UTC)
         self.is_running = False
+        self.last_check_time = None
+        self.total_signals_generated = 0
 
     def start(self):
         """Startet den automatischen Signal-Generator"""
@@ -43,7 +45,10 @@ class AutomatedSignalGenerator:
     def generate_signals(self):
         """Generiert Trading-Signale basierend auf Marktanalyse"""
         try:
-            logger.info("Analysiere Markt für neue Trading-Signale...")
+            current_time = datetime.now(pytz.UTC)
+            self.last_check_time = current_time
+
+            logger.info(f"[{current_time}] Analysiere Markt für neue Trading-Signale...")
 
             # Hole aktuelle Marktdaten
             market_info = self.dex_connector.get_market_info("SOL")
@@ -56,6 +61,9 @@ class AutomatedSignalGenerator:
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
+            logger.info(f"Aktuelle Marktanalyse - Trend: {trend_analysis.get('trend')}, "
+                       f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
+
             # Erstelle Signal basierend auf Analyse
             current_price = float(market_info.get('price', 0))
             signal = self._create_signal_from_analysis(
@@ -67,7 +75,11 @@ class AutomatedSignalGenerator:
                 processed_signal = self.signal_processor.process_signal(signal)
                 if processed_signal:
                     self._notify_users_about_signal(processed_signal)
-                    logger.info(f"Neues Trading-Signal generiert: {processed_signal['pair']}")
+                    self.total_signals_generated += 1
+                    logger.info(f"Neues Trading-Signal generiert: {processed_signal['pair']}, "
+                              f"Qualität: {processed_signal['signal_quality']}/10")
+
+            logger.info(f"Marktanalyse abgeschlossen. Signals generiert: {self.total_signals_generated}")
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
@@ -101,6 +113,10 @@ class AutomatedSignalGenerator:
                 take_profit = max(support, current_price * 0.85)  # 15% Take Profit
                 direction = 'short'
 
+            # Berechne erwarteten Profit und Signal-Qualität
+            expected_profit = abs((take_profit - entry) / entry * 100)
+            signal_quality = self._calculate_signal_quality(trend_analysis, strength, expected_profit)
+
             return {
                 'pair': 'SOL/USD',
                 'direction': direction,
@@ -109,16 +125,38 @@ class AutomatedSignalGenerator:
                 'take_profit': take_profit,
                 'timestamp': datetime.now(pytz.UTC).timestamp(),
                 'dex_connector': self.dex_connector,
-                'token_address': "SOL"
+                'token_address': "SOL",
+                'expected_profit': expected_profit,
+                'signal_quality': signal_quality
             }
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Erstellung: {e}")
             return None
 
+    def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], strength: float, expected_profit: float) -> float:
+        """Berechnet die Qualität eines Signals (0-10)"""
+        try:
+            # Gewichte verschiedene Faktoren
+            trend_score = 8 if trend_analysis['trend'] == 'aufwärts' else 6
+            strength_score = min(strength * 10, 10)
+            profit_score = min(expected_profit / 3, 10)  # 30% Profit = max Score
+
+            # Gewichtete Summe
+            quality = (trend_score * 0.4 + strength_score * 0.3 + profit_score * 0.3)
+
+            return round(quality, 1)
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Qualitätsberechnung: {e}")
+            return 7.0  # Standardwert
+
     def _notify_users_about_signal(self, signal: Dict[str, Any]):
         """Benachrichtigt Benutzer über neue Trading-Signale"""
         try:
+            # Hole das aktuelle Wallet-Guthaben
+            balance = self.bot.wallet_manager.get_balance()
+
             signal_message = (
                 f"🚨 Neues Trading Signal!\n\n"
                 f"Pair: {signal['pair']}\n"
@@ -128,15 +166,24 @@ class AutomatedSignalGenerator:
                 f"Take Profit: {signal['take_profit']:.2f} USD\n\n"
                 f"Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
                 f"Signal-Qualität: {signal['signal_quality']}/10\n\n"
-                f"Nutzen Sie /signal um mehr Details zu sehen und das Signal zu handeln."
+                f"💰 Verfügbares Guthaben: {balance:.4f} SOL\n\n"
+                f"Möchten Sie dieses Signal handeln?"
             )
 
+            # Erstelle Inline-Buttons für die Benutzerinteraktion
+            keyboard = [
+                [
+                    {"text": "✅ Handeln", "callback_data": "trade_signal_new"},
+                    {"text": "❌ Ignorieren", "callback_data": "ignore_signal"}
+                ]
+            ]
+
             # Sende Nachricht an alle aktiven Bot-Benutzer
-            # (Implementierung abhängig von der Bot-Struktur)
             if hasattr(self.bot, 'config') and hasattr(self.bot.config, 'ADMIN_USER_ID'):
                 self.bot.updater.bot.send_message(
                     chat_id=self.bot.config.ADMIN_USER_ID,
-                    text=signal_message
+                    text=signal_message,
+                    reply_markup={"inline_keyboard": keyboard}
                 )
 
         except Exception as e:

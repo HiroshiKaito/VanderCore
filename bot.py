@@ -10,7 +10,6 @@ from telegram.ext import (
 )
 from telegram.error import Conflict, NetworkError, TelegramError
 from datetime import datetime
-
 from config import Config
 from wallet_manager import WalletManager
 from utils import format_amount, validate_amount, format_wallet_info
@@ -39,6 +38,7 @@ class SolanaWalletBot:
         self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
         self.updater = None
         self.waiting_for_address = {}
+        self.waiting_for_trade_amount = False # Added to track trade amount input
 
         # Initialize DexConnector and SignalProcessor
         self.dex_connector = DexConnector()
@@ -78,20 +78,20 @@ class SolanaWalletBot:
 
         try:
             update.message.reply_text(
-                "🚀 Willkommen beim Solana Wallet Bot!\n\n"
-                "Mit diesem Bot können Sie:\n"
-                "✅ Eine Solana-Wallet erstellen\n"
-                "💰 Ihr Guthaben überprüfen\n"
-                "💸 SOL senden und empfangen\n"
-                "📱 QR-Codes für einfache Transaktionen nutzen\n\n"
+                "👋 Hey! Ich bin Dexter - der beste Solana Trading Bot auf dem Markt!\n\n"
+                "🚀 Mit meiner hochentwickelten KI-Analyse finde ich die profitabelsten Trading-Gelegenheiten für dich. "
+                "Lehne dich zurück und lass mich die Arbeit machen!\n\n"
+                "Was ich für dich tun kann:\n"
+                "✅ Top Trading-Signale automatisch erkennen\n"
+                "💰 Deine Solana-Wallet sicher verwalten\n"
+                "📊 Risiken intelligent analysieren\n"
+                "🎯 Gewinnchancen maximieren\n\n"
                 "Verfügbare Befehle:\n"
-                "/start - Bot starten\n"
-                "/hilfe - Zeigt diese Hilfe an\n"
                 "/wallet - Wallet-Verwaltung\n"
-                "/senden - SOL senden\n"
-                "/empfangen - Einzahlungsadresse als QR-Code anzeigen\n"
-                "/signal - Aktuelle Trading Signale anzeigen\n"
-                "/trades - Aktuelle Trades anzeigen",
+                "/signal - Trading Signale anzeigen\n"
+                "/trades - Aktive Trades anzeigen\n"
+                "/hilfe - Weitere Hilfe anzeigen\n\n"
+                "Ready to trade? 🎬",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")]
                 ])
@@ -239,9 +239,18 @@ class SolanaWalletBot:
                         f"🔐 Private Key:\n"
                         f"`{private_key}`\n\n"
                         f"⚠️ WICHTIG: Bewahren Sie den Private Key sicher auf! "
-                        f"Er wird benötigt, um auf Ihre Wallet zuzugreifen.\n\n"
-                        f"Nutzen Sie /wallet um Ihre Wallet-Informationen anzuzeigen.",
+                        f"Er wird benötigt, um auf Ihre Wallet zuzugreifen.",
                         parse_mode='Markdown'
+                    )
+
+                    # Neue motivierende Nachricht mit Button
+                    query.message.reply_text(
+                        "🎯 Sehr gut! Lass uns nach profitablen Trading-Signalen suchen!\n\n"
+                        "Ich analysiere den Markt rund um die Uhr und melde mich sofort, "
+                        "wenn ich eine vielversprechende Gelegenheit gefunden habe.",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🚀 Let's go!", callback_data="start_signal_search")]
+                        ])
                     )
                 else:
                     logger.error(f"Fehler bei Wallet-Erstellung für User {user_id}")
@@ -291,80 +300,145 @@ class SolanaWalletBot:
                 )
                 logger.debug(f"Warte auf Adresseingabe von User {user_id}")
 
+            elif query.data.startswith("trade_signal_"): #Handles new trading signals
+                _, _, signal_index = query.data.split("_")
+                signal_index = int(signal_index)
+                self.waiting_for_trade_amount = True #Set to true before asking for amount
+                query.message.reply_text(
+                    "💰 Wie viel SOL möchten Sie für diesen Trade einsetzen?\n\n"
+                    "Bitte geben Sie den Betrag in SOL ein (z.B. 0.5):"
+                )
+
+            elif query.data == "ignore_signal": #Handles ignoring signals
+                query.message.reply_text("Signal wurde ignoriert. Sie erhalten weiterhin neue Signale.")
+
+            elif query.data.startswith("confirm_trade_"):
+                _, _, amount_str = query.data.split("_")
+                amount = float(amount_str)
+                # Add your trading logic here using amount and signal data
+                query.message.reply_text(f"Trade mit {amount} SOL wird ausgeführt.")
+
+            elif query.data == "cancel_trade":
+                query.message.reply_text("Trade abgebrochen.")
+            elif query.data == "start_signal_search":
+                query.message.reply_text(
+                    "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
+                    "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n"
+                    "Die Signale kannst du auch jederzeit mit /signal abrufen."
+                )
+
         except Exception as e:
             logger.error(f"Fehler im Button Handler: {e}")
 
     def handle_text(self, update: Update, context: CallbackContext) -> None:
-        """Verarbeitet Textnachrichten für manuelle Adresseingabe"""
+        """Verarbeitet Textnachrichten für manuelle Adresseingabe und Trade-Beträge"""
         user_id = update.effective_user.id
         logger.debug(f"Textnachricht von User {user_id} empfangen")
 
-        if user_id not in self.waiting_for_address:
-            logger.debug(f"User {user_id} ist nicht im Adresseingabe-Modus")
+        if user_id not in self.waiting_for_address and not self.waiting_for_trade_amount:
+            logger.debug(f"User {user_id} ist nicht im Eingabe-Modus")
             return
 
         try:
             text = update.message.text.strip()
             logger.debug(f"Verarbeite Eingabe: {text}")
-            parts = text.split()
 
-            if len(parts) != 2:
-                update.message.reply_text(
-                    "❌ Falsches Format! Bitte geben Sie die Adresse und den Betrag so ein:\n"
-                    "ADRESSE BETRAG\n\n"
-                    "Beispiel:\n"
-                    "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 0.1"
+            if self.waiting_for_trade_amount: #Handles trade amount input
+                try:
+                    amount = float(text)
+                    balance = self.wallet_manager.get_balance()
+
+                    if amount <= 0:
+                        update.message.reply_text("❌ Bitte geben Sie einen positiven Betrag ein.")
+                        return
+
+                    if amount > balance:
+                        update.message.reply_text(
+                            f"❌ Nicht genügend Guthaben!\n\n"
+                            f"Verfügbar: {balance:.4f} SOL\n"
+                            f"Benötigt: {amount:.4f} SOL"
+                        )
+                        return
+
+                    # Zeige Zusammenfassung und frage nach Bestätigung
+                    update.message.reply_text(
+                        f"📝 Trade-Zusammenfassung:\n\n"
+                        f"Betrag: {amount:.4f} SOL\n"
+                        f"Verbleibendes Guthaben: {(balance - amount):.4f} SOL\n\n"
+                        f"Möchten Sie den Trade ausführen?",
+                        reply_markup=InlineKeyboardMarkup([
+                            [
+                                InlineKeyboardButton("✅ Bestätigen", callback_data=f"confirm_trade_{amount}"),
+                                InlineKeyboardButton("❌ Abbrechen", callback_data="cancel_trade")
+                            ]
+                        ])
+                    )
+
+                except ValueError:
+                    update.message.reply_text("❌ Ungültiger Betrag. Bitte geben Sie eine Zahl ein.")
+                finally:
+                    self.waiting_for_trade_amount = False
+
+            elif user_id in self.waiting_for_address: #Handle address input
+                parts = text.split()
+
+                if len(parts) != 2:
+                    update.message.reply_text(
+                        "❌ Falsches Format! Bitte geben Sie die Adresse und den Betrag so ein:\n"
+                        "ADRESSE BETRAG\n\n"
+                        "Beispiel:\n"
+                        "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 0.1"
+                    )
+                    return
+
+                address, amount_str = parts
+                logger.debug(f"Parsed: Adresse={address}, Betrag={amount_str}")
+
+                # Validiere den Betrag
+                valid, amount = validate_amount(amount_str)
+                if not valid:
+                    update.message.reply_text("❌ Ungültiger Betrag! Bitte geben Sie eine positive Zahl ein.")
+                    return
+
+                # Schätze Transaktionsgebühren
+                fee = self.wallet_manager.estimate_transaction_fee()
+                total_amount = amount + fee
+
+                # Führe Sicherheits- und Risikoanalyse durch
+                security_score, security_warnings = self.wallet_manager.security_analyzer.analyze_wallet_security(
+                    address, self.wallet_manager.transaction_history
                 )
-                return
+                risk_score, risk_recommendations = self.wallet_manager.risk_analyzer.analyze_transaction_risk(
+                    amount, self.wallet_manager.transaction_history
+                )
 
-            address, amount_str = parts
-            logger.debug(f"Parsed: Adresse={address}, Betrag={amount_str}")
+                # Erstelle detaillierte Transaktionsinfo
+                security_status = "🟢 Sicher" if security_score >= 70 else "🟡 Prüfen" if security_score >= 50 else "🔴 Riskant"
+                warnings_text = "\n".join(f"• {warning}" for warning in security_warnings) if security_warnings else "• Keine Warnungen"
 
-            # Validiere den Betrag
-            valid, amount = validate_amount(amount_str)
-            if not valid:
-                update.message.reply_text("❌ Ungültiger Betrag! Bitte geben Sie eine positive Zahl ein.")
-                return
+                transaction_info = (
+                    f"📝 Transaktionsdetails:\n\n"
+                    f"An: `{address}`\n"
+                    f"Betrag: {format_amount(amount)} SOL\n"
+                    f"Gebühr: {format_amount(fee)} SOL\n"
+                    f"Gesamt: {format_amount(total_amount)} SOL\n\n"
+                    f"🛡 Sicherheitsbewertung: {security_status} ({security_score:.0f}/100)\n"
+                    f"⚠️ Sicherheitshinweise:\n{warnings_text}\n\n"
+                    f"📊 Risikoanalyse:\n{risk_recommendations}\n\n"
+                    f"Möchten Sie die Transaktion ausführen?"
+                )
 
-            # Schätze Transaktionsgebühren
-            fee = self.wallet_manager.estimate_transaction_fee()
-            total_amount = amount + fee
-
-            # Führe Sicherheits- und Risikoanalyse durch
-            security_score, security_warnings = self.wallet_manager.security_analyzer.analyze_wallet_security(
-                address, self.wallet_manager.transaction_history
-            )
-            risk_score, risk_recommendations = self.wallet_manager.risk_analyzer.analyze_transaction_risk(
-                amount, self.wallet_manager.transaction_history
-            )
-
-            # Erstelle detaillierte Transaktionsinfo
-            security_status = "🟢 Sicher" if security_score >= 70 else "🟡 Prüfen" if security_score >= 50 else "🔴 Riskant"
-            warnings_text = "\n".join(f"• {warning}" for warning in security_warnings) if security_warnings else "• Keine Warnungen"
-
-            transaction_info = (
-                f"📝 Transaktionsdetails:\n\n"
-                f"An: `{address}`\n"
-                f"Betrag: {format_amount(amount)} SOL\n"
-                f"Gebühr: {format_amount(fee)} SOL\n"
-                f"Gesamt: {format_amount(total_amount)} SOL\n\n"
-                f"🛡 Sicherheitsbewertung: {security_status} ({security_score:.0f}/100)\n"
-                f"⚠️ Sicherheitshinweise:\n{warnings_text}\n\n"
-                f"📊 Risikoanalyse:\n{risk_recommendations}\n\n"
-                f"Möchten Sie die Transaktion ausführen?"
-            )
-
-            # Zeige Transaktionsdetails und frage nach Bestätigung
-            update.message.reply_text(
-                transaction_info,
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("✅ Ja", callback_data=f"confirm_send_{address}_{amount}"),
-                        InlineKeyboardButton("❌ Nein", callback_data="cancel_send")
-                    ]
-                ])
-            )
+                # Zeige Transaktionsdetails und frage nach Bestätigung
+                update.message.reply_text(
+                    transaction_info,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("✅ Ja", callback_data=f"confirm_send_{address}_{amount}"),
+                            InlineKeyboardButton("❌ Nein", callback_data="cancel_send")
+                        ]
+                    ])
+                )
 
         except Exception as e:
             logger.error(f"Fehler bei manueller Adresseingabe: {e}")
@@ -373,6 +447,7 @@ class SolanaWalletBot:
             # Entferne den User aus der Wartelist
             self.waiting_for_address.pop(user_id, None)
             logger.debug(f"User {user_id} aus Adresseingabe-Modus entfernt")
+
 
     def handle_signal_command(self, update: Update, context: CallbackContext) -> None:
         """Handler für den /signal Befehl - zeigt aktuelle Trading Signale"""
@@ -406,7 +481,7 @@ class SolanaWalletBot:
                 keyboard = [
                     [
                         InlineKeyboardButton("✅ Handeln", callback_data=f"trade_signal_{idx}"),
-                        InlineKeyboardButton("❌ Ignorieren", callback_data=f"ignore_signal_{idx}")
+                        InlineKeyboardButton("❌ Ignorieren", callback_data=f"ignore_signal")
                     ]
                 ]
 
@@ -423,7 +498,7 @@ class SolanaWalletBot:
         """Handler für den /trades Befehl - zeigt aktuelle Trades"""
         try:
             executed_signals = [s for s in self.signal_processor.active_signals
-                              if s['status'] == 'ausgeführt']
+                                 if s['status'] == 'ausgeführt']
 
             if not executed_signals:
                 update.message.reply_text(
