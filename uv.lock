@@ -813,6 +813,14 @@ wheels = [
 ]
 
 [[package]]
+name = "keras"
+version = "2.12.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/80/34e55d7e3ed9cf18020929460f969de1bf82cf2f509c639b358ae2b25618/keras-2.12.0-py2.py3-none-any.whl", hash = "sha256:35c39534011e909645fb93515452e98e1a0ce23727b55d4918b9c58b2308c15e", size = 1737695 },
+]
+
+[[package]]
 name = "kiwisolver"
 version = "1.4.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1636,6 +1644,7 @@ dependencies = [
     { name = "ccxt" },
     { name = "flask" },
     { name = "flask-socketio" },
+    { name = "keras" },
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "openai" },
@@ -1664,6 +1673,7 @@ requires-dist = [
     { name = "ccxt", specifier = ">=4.4.30" },
     { name = "flask", specifier = ">=3.1.0" },
     { name = "flask-socketio", specifier = ">=5.5.1" },
+    { name = "keras", specifier = "==2.12.0" },
     { name = "matplotlib", specifier = ">=3.10.1" },
     { name = "numpy", specifier = ">=2.2.3" },
     { name = "openai", specifier = ">=1.65.3" },

@@ -3,19 +3,18 @@ import numpy as np
 from typing import Dict, List, Tuple, Any
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-import ta  # Verwende direkt ta statt pandas_ta
+import ta
 
-# Importiere TensorFlow mit Error Handling
+# Importiere Keras mit Error Handling
 try:
-    import tensorflow as tf
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import LSTM, Dense, Dropout
-    from tensorflow.keras.optimizers import Adam
-    from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-    TF_AVAILABLE = True
+    from keras.models import Sequential
+    from keras.layers import LSTM, Dense, Dropout
+    from keras.optimizers import Adam
+    from keras.callbacks import EarlyStopping, ReduceLROnPlateau
+    KERAS_AVAILABLE = True
 except ImportError:
-    TF_AVAILABLE = False
-    logging.warning("TensorFlow konnte nicht importiert werden. KI-Funktionen sind eingeschränkt.")
+    KERAS_AVAILABLE = False
+    logging.warning("Keras konnte nicht importiert werden. KI-Funktionen sind eingeschränkt.")
 
 logger = logging.getLogger(__name__)
 
@@ -34,39 +33,22 @@ class AITradingEngine:
         self.reddit_api = "https://www.reddit.com/r/solana"
         self.nitter_api = "https://nitter.net/search"
 
-        # Initialisiere TensorFlow wenn verfügbar
-        if TF_AVAILABLE:
-            self._setup_gpu()
+        # Initialisiere Keras wenn verfügbar
+        if KERAS_AVAILABLE:
             self._build_model()
-            logger.info("KI-Trading-Engine mit TensorFlow initialisiert")
+            logger.info("KI-Trading-Engine mit Keras initialisiert")
         else:
-            logger.warning("KI-Trading-Engine läuft im eingeschränkten Modus ohne TensorFlow")
-
-    def _setup_gpu(self):
-        """Konfiguriert GPU-Nutzung für TensorFlow"""
-        if not TF_AVAILABLE:
-            return
-
-        try:
-            gpus = tf.config.list_physical_devices('GPU')
-            if gpus:
-                for gpu in gpus:
-                    tf.config.experimental.set_memory_growth(gpu, True)
-                logger.info(f"GPU-Unterstützung aktiviert: {len(gpus)} GPUs gefunden")
-            else:
-                logger.info("Keine GPU gefunden - nutze CPU")
-        except Exception as e:
-            logger.warning(f"GPU Setup fehlgeschlagen: {e}")
+            logger.warning("KI-Trading-Engine läuft im eingeschränkten Modus ohne Keras")
 
     def prepare_features(self, price_data: pd.DataFrame) -> np.ndarray:
         """Bereitet Features für das ML-Modell vor"""
-        if not TF_AVAILABLE:
+        if not KERAS_AVAILABLE:
             return np.array([])
 
         try:
             df = price_data.copy()
 
-            # Technische Indikatoren mit ta statt pandas_ta
+            # Technische Indikatoren
             df['rsi'] = ta.momentum.rsi(df['close'], window=14)
             macd = ta.trend.macd(df['close'])
             df['macd'] = macd.iloc[:, 0]
@@ -81,7 +63,6 @@ class AITradingEngine:
             df['volume_change'] = df['volume'].pct_change()
             df['trend_strength'] = abs(df['price_change'].rolling(window=10).mean())
 
-            # Feature-Normalisierung
             feature_columns = [
                 'close', 'volume', 'rsi', 'macd', 'bb_upper', 'bb_lower',
                 'price_change', 'volatility', 'volume_change', 'trend_strength'
@@ -107,13 +88,13 @@ class AITradingEngine:
             return np.array([])
 
     def _build_model(self):
-        """Erstellt das LSTM-Modell"""
-        if not TF_AVAILABLE:
+        """Erstellt das LSTM-Modell mit Keras"""
+        if not KERAS_AVAILABLE:
             return
 
         try:
             model = Sequential([
-                LSTM(128, return_sequences=True, input_shape=(60, 10)),  # Angepasst an Feature-Anzahl
+                LSTM(128, return_sequences=True, input_shape=(60, 10)),
                 Dropout(0.3),
                 LSTM(64, return_sequences=False),
                 Dropout(0.3),
@@ -137,7 +118,7 @@ class AITradingEngine:
     def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
         """Sagt die nächste Kursbewegung vorher"""
         try:
-            if not TF_AVAILABLE or self.model is None:
+            if not KERAS_AVAILABLE or self.model is None:
                 return self._predict_with_technical_analysis(current_data)
 
             X = self.prepare_features(current_data)
@@ -213,7 +194,7 @@ class AITradingEngine:
             return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
 
     def _calculate_confidence(self, price_change: float, volatility: float, 
-                            volume_trend: float, current_price: float) -> float:
+                          volume_trend: float, current_price: float) -> float:
         """Berechnet die Konfidenz der Vorhersage"""
         try:
             price_confidence = min(abs(price_change) / 2, 1.0)
@@ -234,7 +215,7 @@ class AITradingEngine:
 
     def train_model(self, training_data: pd.DataFrame):
         """Trainiert das LSTM-Modell"""
-        if not TF_AVAILABLE or self.model is None:
+        if not KERAS_AVAILABLE or self.model is None:
             return
 
         try:
