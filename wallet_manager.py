@@ -9,6 +9,9 @@ from io import BytesIO
 import cv2
 import numpy as np
 from PIL import Image
+from risk_analyzer import RiskAnalyzer
+from security_analyzer import SecurityAnalyzer
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +19,17 @@ class WalletManager:
     def __init__(self, rpc_url: str):
         """Initialisiert den Wallet Manager mit echter Solana-Verbindung"""
         logger.info(f"Verbinde mit Solana RPC: {rpc_url}")
-        # Ensure we're using the correct commitment level for devnet
         self.client = Client(rpc_url, commitment="confirmed")
         self.keypair = None
-        # Verify connection and network
+        self.risk_analyzer = RiskAnalyzer()
+        self.security_analyzer = SecurityAnalyzer()
+        self.transaction_history = []
+
         try:
             version = self.client.get_version()
             logger.info(f"Verbunden mit Solana {version['result']['solana-core']}")
         except Exception as e:
             logger.error(f"Fehler bei der Verbindung zum Solana-Netzwerk: {e}")
-        logger.info("WalletManager mit Solana-Verbindung initialisiert")
 
     def create_wallet(self) -> tuple[str, str]:
         """Erstellt eine neue Solana Wallet"""
@@ -78,10 +82,24 @@ class WalletManager:
             return 0.000005  # Fallback auf Standard-Gebühr
 
     def send_sol(self, to_address: str, amount: float) -> tuple[bool, str]:
-        """Sendet SOL an eine andere Adresse"""
+        """Sendet SOL an eine andere Adresse mit Risiko- und Sicherheitsanalyse"""
         try:
             if not self.keypair:
                 return False, "Keine Wallet geladen"
+
+            # Sicherheitsanalyse der Zieladresse
+            security_score, security_warnings = self.security_analyzer.analyze_wallet_security(
+                to_address, self.transaction_history
+            )
+
+            if security_score < 50:
+                warning_msg = "\n".join(security_warnings)
+                return False, f"Sicherheitswarnung: {warning_msg}"
+
+            # Risikoanalyse der Transaktion
+            risk_score, risk_recommendations = self.risk_analyzer.analyze_transaction_risk(
+                amount, self.transaction_history
+            )
 
             # Berechne Transaktionsgebühren
             fee = self.estimate_transaction_fee()
@@ -92,10 +110,13 @@ class WalletManager:
             if balance < total_amount:
                 return False, f"Nicht genügend Guthaben. Benötigt: {total_amount} SOL (inkl. {fee} SOL Gebühren)"
 
-            # Konvertiere SOL zu Lamports
-            lamports = int(total_amount * 1e9) #Corrected this line to include fees in lamports calculation
+            # Wenn hohes Risiko, gebe Warnung zurück
+            if risk_score > 0.7:
+                return False, f"Hohes Transaktionsrisiko:\n{risk_recommendations}"
 
-            # Erstelle die Transaktion
+            # Führe Transaktion aus
+            lamports = int(amount * 1e9)
+
             transfer_params = TransferParams(
                 from_pubkey=self.keypair.public_key,
                 to_pubkey=to_address,
@@ -111,8 +132,18 @@ class WalletManager:
             )
 
             if 'result' in result:
-                logger.info(f"Transaktion erfolgreich: {result['result'][:8]}...")
+                # Füge Transaktion zur Historie hinzu
+                self.transaction_history.append({
+                    'timestamp': datetime.now(),
+                    'amount': amount,
+                    'to_address': to_address,
+                    'type': 'send',
+                    'status': 'success'
+                })
+
+                logger.info(f"Transaktion erfolgreich: {result['result']}")
                 return True, result['result']
+
             return False, "Transaktion fehlgeschlagen"
 
         except Exception as e:

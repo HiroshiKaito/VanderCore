@@ -9,10 +9,15 @@ from telegram.ext import (
     CallbackContext
 )
 from telegram.error import Conflict, NetworkError, TelegramError
+from datetime import datetime
 
 from config import Config
 from wallet_manager import WalletManager
 from utils import format_amount, validate_amount, format_wallet_info
+from signal_processor import SignalProcessor
+from dex_connector import DexConnector
+from automated_signal_generator import AutomatedSignalGenerator
+
 
 # Logging Setup mit detailliertem Format
 logging.basicConfig(
@@ -34,6 +39,13 @@ class SolanaWalletBot:
         self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
         self.updater = None
         self.waiting_for_address = {}
+
+        # Initialize DexConnector and SignalProcessor
+        self.dex_connector = DexConnector()
+        self.signal_processor = SignalProcessor()
+
+        # Initialize AutomatedSignalGenerator
+        self.signal_generator = None  # Will be initialized after updater
         logger.info("Bot erfolgreich initialisiert")
 
     def error_handler(self, update: object, context: CallbackContext) -> None:
@@ -77,7 +89,9 @@ class SolanaWalletBot:
                 "/hilfe - Zeigt diese Hilfe an\n"
                 "/wallet - Wallet-Verwaltung\n"
                 "/senden - SOL senden\n"
-                "/empfangen - Einzahlungsadresse als QR-Code anzeigen",
+                "/empfangen - Einzahlungsadresse als QR-Code anzeigen\n"
+                "/signal - Aktuelle Trading Signale anzeigen\n"
+                "/trades - Aktuelle Trades anzeigen",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")]
                 ])
@@ -99,6 +113,9 @@ class SolanaWalletBot:
             "/wallet - Wallet-Info anzeigen\n"
             "/senden - SOL senden (mit QR-Scanner oder manueller Eingabe)\n"
             "/empfangen - Einzahlungsadresse als QR-Code anzeigen\n\n"
+            "🔹 Trading Befehle:\n"
+            "/signal - Aktuelle Trading Signale anzeigen\n"
+            "/trades - Aktuelle Trades anzeigen\n"
             "❓ Brauchen Sie Hilfe? Nutzen Sie /start um neu zu beginnen!"
         )
 
@@ -277,7 +294,6 @@ class SolanaWalletBot:
         except Exception as e:
             logger.error(f"Fehler im Button Handler: {e}")
 
-
     def handle_text(self, update: Update, context: CallbackContext) -> None:
         """Verarbeitet Textnachrichten für manuelle Adresseingabe"""
         user_id = update.effective_user.id
@@ -314,14 +330,33 @@ class SolanaWalletBot:
             fee = self.wallet_manager.estimate_transaction_fee()
             total_amount = amount + fee
 
-            # Zeige Transaktionsdetails und frage nach Bestätigung
-            update.message.reply_text(
+            # Führe Sicherheits- und Risikoanalyse durch
+            security_score, security_warnings = self.wallet_manager.security_analyzer.analyze_wallet_security(
+                address, self.wallet_manager.transaction_history
+            )
+            risk_score, risk_recommendations = self.wallet_manager.risk_analyzer.analyze_transaction_risk(
+                amount, self.wallet_manager.transaction_history
+            )
+
+            # Erstelle detaillierte Transaktionsinfo
+            security_status = "🟢 Sicher" if security_score >= 70 else "🟡 Prüfen" if security_score >= 50 else "🔴 Riskant"
+            warnings_text = "\n".join(f"• {warning}" for warning in security_warnings) if security_warnings else "• Keine Warnungen"
+
+            transaction_info = (
                 f"📝 Transaktionsdetails:\n\n"
                 f"An: `{address}`\n"
                 f"Betrag: {format_amount(amount)} SOL\n"
                 f"Gebühr: {format_amount(fee)} SOL\n"
                 f"Gesamt: {format_amount(total_amount)} SOL\n\n"
-                f"Möchten Sie die Transaktion ausführen?",
+                f"🛡 Sicherheitsbewertung: {security_status} ({security_score:.0f}/100)\n"
+                f"⚠️ Sicherheitshinweise:\n{warnings_text}\n\n"
+                f"📊 Risikoanalyse:\n{risk_recommendations}\n\n"
+                f"Möchten Sie die Transaktion ausführen?"
+            )
+
+            # Zeige Transaktionsdetails und frage nach Bestätigung
+            update.message.reply_text(
+                transaction_info,
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -339,6 +374,90 @@ class SolanaWalletBot:
             self.waiting_for_address.pop(user_id, None)
             logger.debug(f"User {user_id} aus Adresseingabe-Modus entfernt")
 
+    def handle_signal_command(self, update: Update, context: CallbackContext) -> None:
+        """Handler für den /signal Befehl - zeigt aktuelle Trading Signale"""
+        try:
+            active_signals = self.signal_processor.get_active_signals()
+
+            if not active_signals:
+                update.message.reply_text(
+                    "🔍 Aktuell keine aktiven Trading-Signale verfügbar.\n"
+                    "Neue Signale werden automatisch analysiert und angezeigt."
+                )
+                return
+
+            for idx, signal in enumerate(active_signals):
+                # Erstelle eine formatierte Nachricht für jedes Signal
+                signal_message = (
+                    f"📊 Trading Signal #{idx + 1}\n\n"
+                    f"Pair: {signal['pair']}\n"
+                    f"Signal: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
+                    f"Einstieg: {format_amount(signal['entry'])} SOL\n"
+                    f"Stop Loss: {format_amount(signal['stop_loss'])} SOL\n"
+                    f"Take Profit: {format_amount(signal['take_profit'])} SOL\n\n"
+                    f"📈 Trend: {signal['trend']} (Stärke: {signal['trend_strength']:.1f})\n"
+                    f"💰 Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
+                    f"⚠️ Risiko-Score: {signal['risk_score']:.1f}\n"
+                    f"✨ Signal-Qualität: {signal['signal_quality']}/10\n\n"
+                    f"Möchten Sie dieses Signal handeln?"
+                )
+
+                # Erstelle Inline-Buttons für die Interaktion
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Handeln", callback_data=f"trade_signal_{idx}"),
+                        InlineKeyboardButton("❌ Ignorieren", callback_data=f"ignore_signal_{idx}")
+                    ]
+                ]
+
+                update.message.reply_text(
+                    signal_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
+        except Exception as e:
+            logger.error(f"Fehler beim Anzeigen der Signale: {e}")
+            update.message.reply_text("❌ Fehler beim Abrufen der Trading-Signale.")
+
+    def handle_trades_command(self, update: Update, context: CallbackContext) -> None:
+        """Handler für den /trades Befehl - zeigt aktuelle Trades"""
+        try:
+            executed_signals = [s for s in self.signal_processor.active_signals
+                              if s['status'] == 'ausgeführt']
+
+            if not executed_signals:
+                update.message.reply_text(
+                    "📊 Keine aktiven Trades\n\n"
+                    "Nutzen Sie /signal um neue Trading-Signale zu sehen."
+                )
+                return
+
+            for idx, trade in enumerate(executed_signals):
+                trade_message = (
+                    f"🔄 Aktiver Trade #{idx + 1}\n\n"
+                    f"Pair: {trade['pair']}\n"
+                    f"Position: {'📈 LONG' if trade['direction'] == 'long' else '📉 SHORT'}\n"
+                    f"Einstieg: {format_amount(trade['entry'])} SOL\n"
+                    f"Stop Loss: {format_amount(trade['stop_loss'])} SOL\n"
+                    f"Take Profit: {format_amount(trade['take_profit'])} SOL\n"
+                    f"Erwarteter Profit: {trade['expected_profit']:.1f}%\n\n"
+                    f"⏰ Eröffnet: {datetime.fromtimestamp(trade['timestamp']).strftime('%d.%m.%Y %H:%M:%S')}"
+                )
+
+                keyboard = [
+                    [InlineKeyboardButton("🔚 Position schließen", callback_data=f"close_trade_{idx}")]
+                ]
+
+                update.message.reply_text(
+                    trade_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
+        except Exception as e:
+            logger.error(f"Fehler beim Anzeigen der Trades: {e}")
+            update.message.reply_text("❌ Fehler beim Abrufen der aktiven Trades.")
+
+
     def run(self):
         """Startet den Bot"""
         logger.info("Starting bot...")
@@ -346,6 +465,18 @@ class SolanaWalletBot:
             # Initialize updater with bot's token
             self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
             logger.debug("Updater initialisiert")
+
+            # Initialize DEX connection
+            self.dex_connector.initialize()
+
+            # Initialize and start signal generator
+            self.signal_generator = AutomatedSignalGenerator(
+                self.dex_connector,
+                self.signal_processor,
+                self
+            )
+            self.signal_generator.start()
+            logger.info("Automatischer Signal-Generator gestartet")
 
             # Get the dispatcher to register handlers
             dp = self.updater.dispatcher
@@ -360,17 +491,19 @@ class SolanaWalletBot:
             dp.add_handler(CommandHandler("wallet", self.wallet_command))
             dp.add_handler(CommandHandler("senden", self.send_command))
             dp.add_handler(CommandHandler("empfangen", self.receive_command))
+            dp.add_handler(CommandHandler("signal", self.handle_signal_command))
+            dp.add_handler(CommandHandler("trades", self.handle_trades_command))
             logger.debug("Command Handler registriert")
 
             # Callback query handler
             dp.add_handler(CallbackQueryHandler(self.button_handler))
             logger.debug("Callback Query Handler registriert")
 
-            # Message handler for text (mit höherer Priorität)
+            # Message handler for text
             dp.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_text))
             logger.debug("Text Message Handler registriert")
 
-            # Start the Bot with a larger timeout
+            # Start the Bot
             logger.info("Bot startet Polling...")
             self.updater.start_polling(timeout=30, drop_pending_updates=True)
             logger.info("Bot ist bereit für Nachrichten")
@@ -380,6 +513,8 @@ class SolanaWalletBot:
 
         except Exception as e:
             logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
+            if self.signal_generator:
+                self.signal_generator.stop()
             raise
 
 if __name__ == "__main__":
