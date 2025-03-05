@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.iana-etc
     pkgs.opencv
     pkgs.libGLU
     pkgs.libGL

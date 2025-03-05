@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Trading Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .chart-container {
+            background-color: #2d2d2d;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .stats-container {
+            background-color: #2d2d2d;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .stat-box {
+            background-color: #3d3d3d;
+            border-radius: 6px;
+            padding: 15px;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            color: #888;
+        }
+        .stat-value {
+            font-size: 1.4em;
+            margin-top: 5px;
+            color: #4CAF50;
+        }
+        .trend-up {
+            color: #4CAF50;
+        }
+        .trend-down {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <div class="chart-container">
+            <div id="priceChart"></div>
+        </div>
+        <div class="stats-container">
+            <h2>Live Trading Statistiken</h2>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">SOL Preis</div>
+                    <div class="stat-value" id="currentPrice">0.00 USDC</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">24h Änderung</div>
+                    <div class="stat-value" id="priceChange">0.00%</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Trend</div>
+                    <div class="stat-value" id="currentTrend">Neutral</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Trend Stärke</div>
+                    <div class="stat-value" id="trendStrength">0.00</div>
+                </div>
+            </div>
+            <div id="signalsList" style="margin-top: 20px;">
+                <h3>Aktuelle Signale</h3>
+                <!-- Signals will be dynamically inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize WebSocket connection
+        const socket = io();
+        
+        // Initialize price chart
+        let priceData = {
+            x: [],
+            y: [],
+            type: 'scatter',
+            mode: 'lines',
+            name: 'SOL/USDC',
+            line: {
+                color: '#4CAF50',
+                width: 2
+            }
+        };
+
+        let layout = {
+            title: 'SOL/USDC Preisverlauf',
+            paper_bgcolor: '#2d2d2d',
+            plot_bgcolor: '#2d2d2d',
+            font: {
+                color: '#ffffff'
+            },
+            xaxis: {
+                gridcolor: '#444444',
+                title: 'Zeit'
+            },
+            yaxis: {
+                gridcolor: '#444444',
+                title: 'Preis (USDC)'
+            }
+        };
+
+        Plotly.newPlot('priceChart', [priceData], layout);
+
+        // Handle incoming market data
+        socket.on('market_update', function(data) {
+            // Update price chart
+            Plotly.extendTraces('priceChart', {
+                x: [[new Date()]],
+                y: [[data.price]]
+            }, [0]);
+
+            // Update stats
+            document.getElementById('currentPrice').textContent = data.price.toFixed(2) + ' USDC';
+            document.getElementById('currentTrend').textContent = data.trend;
+            document.getElementById('trendStrength').textContent = data.strength.toFixed(2);
+            
+            // Update price change color
+            const priceChangeElement = document.getElementById('priceChange');
+            priceChangeElement.textContent = data.change_24h.toFixed(2) + '%';
+            if (data.change_24h > 0) {
+                priceChangeElement.className = 'stat-value trend-up';
+            } else if (data.change_24h < 0) {
+                priceChangeElement.className = 'stat-value trend-down';
+            }
+
+            // Animate trend indicator
+            const trendElement = document.getElementById('currentTrend');
+            trendElement.className = data.trend === 'aufwärts' ? 'stat-value trend-up' : 'stat-value trend-down';
+        });
+
+        // Handle incoming trading signals
+        socket.on('trading_signal', function(signal) {
+            const signalsList = document.getElementById('signalsList');
+            const signalElement = document.createElement('div');
+            signalElement.className = 'stat-box';
+            signalElement.innerHTML = `
+                <div class="stat-label">${signal.direction === 'long' ? '📈 LONG' : '📉 SHORT'} Signal</div>
+                <div class="stat-value">
+                    Entry: ${signal.entry.toFixed(2)} USDC<br>
+                    Target: ${signal.take_profit.toFixed(2)} USDC<br>
+                    Stop: ${signal.stop_loss.toFixed(2)} USDC
+                </div>
+            `;
+            signalsList.prepend(signalElement);
+            
+            // Remove old signals (keep last 5)
+            while (signalsList.children.length > 6) { // +1 for the heading
+                signalsList.removeChild(signalsList.lastChild);
+            }
+        });
+    </script>
+</body>
+</html>
