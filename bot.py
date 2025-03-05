@@ -1,6 +1,11 @@
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    CallbackQueryHandler,
+    CallbackContext
+)
 
 from config import Config
 from wallet_manager import WalletManager
@@ -23,11 +28,11 @@ class TradingBot:
         self.dex_connector = DexConnector()
         self.signal_processor = SignalProcessor()
         self.chart_analyzer = ChartAnalyzer()
-        self.application = None
+        self.updater = None
 
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def start(self, update: Update, context: CallbackContext):
         """Start-Befehl Handler"""
-        await update.message.reply_text(
+        update.message.reply_text(
             self.config.WELCOME_MESSAGE,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔗 Wallet verbinden", callback_data="connect_wallet")],
@@ -35,15 +40,15 @@ class TradingBot:
             ])
         )
 
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def help_command(self, update: Update, context: CallbackContext):
         """Hilfe-Befehl Handler"""
-        await update.message.reply_text(self.config.HELP_MESSAGE)
+        update.message.reply_text(self.config.HELP_MESSAGE)
 
-    async def wallet_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def wallet_command(self, update: Update, context: CallbackContext):
         """Wallet-Befehl Handler"""
         address = self.wallet_manager.get_address()
         if not address:
-            await update.message.reply_text(
+            update.message.reply_text(
                 "❌ Keine Wallet verbunden. Bitte zuerst eine Wallet verbinden.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("🔗 Wallet verbinden", callback_data="connect_wallet")
@@ -52,7 +57,7 @@ class TradingBot:
             return
 
         balance = self.wallet_manager.get_balance()
-        await update.message.reply_text(
+        update.message.reply_text(
             format_wallet_info(balance, address),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("💸 Senden", callback_data="send_sol")],
@@ -60,20 +65,20 @@ class TradingBot:
             ])
         )
 
-    async def trade_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def trade_command(self, update: Update, context: CallbackContext):
         """Trade-Befehl Handler"""
         if not self.wallet_manager.get_address():
-            await update.message.reply_text("❌ Bitte zuerst Wallet verbinden!")
+            update.message.reply_text("❌ Bitte zuerst Wallet verbinden!")
             return
 
         active_signals = self.signal_processor.get_active_signals()
         if not active_signals:
-            await update.message.reply_text("🔍 Aktuell keine aktiven Trading Signale verfügbar.")
+            update.message.reply_text("🔍 Aktuell keine aktiven Trading Signale verfügbar.")
             return
 
         for idx, signal in enumerate(active_signals):
             message = create_trade_message(signal)
-            await update.message.reply_text(
+            update.message.reply_text(
                 message,
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -83,21 +88,21 @@ class TradingBot:
                 ])
             )
 
-    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def button_handler(self, update: Update, context: CallbackContext):
         """Callback Query Handler für Buttons"""
         query = update.callback_query
-        await query.answer()
+        query.answer()
 
         if query.data == "connect_wallet":
             # Wallet-Verbindung Logik
             public_key, private_key = self.wallet_manager.create_wallet()
-            await query.message.reply_text(
+            query.message.reply_text(
                 f"✅ Neue Wallet erstellt!\n\nAdresse: {public_key}\n\n⚠️ Bitte Private Key sicher aufbewahren!"
             )
 
         elif query.data.startswith("execute_trade_"):
             signal_id = int(query.data.split("_")[-1])
-            await query.message.reply_text(
+            query.message.reply_text(
                 "💰 Bitte Handelsbetrag in SOL eingeben:",
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -108,10 +113,10 @@ class TradingBot:
                 ])
             )
 
-    async def amount_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def amount_handler(self, update: Update, context: CallbackContext):
         """Handler für Trade-Beträge"""
         query = update.callback_query
-        await query.answer()
+        query.answer()
 
         try:
             amount, signal_id = query.data.split("_")[1:]
@@ -128,46 +133,51 @@ class TradingBot:
 
             if success:
                 self.signal_processor.mark_signal_executed(signal_id)
-                await query.message.reply_text(
+                query.message.reply_text(
                     f"✅ Trade erfolgreich ausgeführt!\n\nBetrag: {amount} SOL\nTransaktion: {tx_id}"
                 )
             else:
-                await query.message.reply_text(
+                query.message.reply_text(
                     f"❌ Trade fehlgeschlagen: {tx_id}"
                 )
 
         except Exception as e:
             logger.error(f"Fehler bei Trade-Ausführung: {e}")
-            await query.message.reply_text(
+            query.message.reply_text(
                 "❌ Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut."
             )
 
-    async def run(self):
+    def run(self):
         """Startet den Bot"""
         logger.info("Starting bot...")
         try:
-            # Initialize application with bot's token
-            self.application = Application.builder().token(self.config.TELEGRAM_TOKEN).build()
+            # Initialize updater with bot's token
+            self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
+
+            # Get the dispatcher to register handlers
+            dp = self.updater.dispatcher
 
             # Command handlers
-            self.application.add_handler(CommandHandler("start", self.start))
-            self.application.add_handler(CommandHandler("hilfe", self.help_command))
-            self.application.add_handler(CommandHandler("wallet", self.wallet_command))
-            self.application.add_handler(CommandHandler("trade", self.trade_command))
+            dp.add_handler(CommandHandler("start", self.start))
+            dp.add_handler(CommandHandler("hilfe", self.help_command))
+            dp.add_handler(CommandHandler("wallet", self.wallet_command))
+            dp.add_handler(CommandHandler("trade", self.trade_command))
 
             # Callback query handlers
-            self.application.add_handler(CallbackQueryHandler(self.button_handler, pattern="^(connect_wallet|execute_trade_\d+)$"))
-            self.application.add_handler(CallbackQueryHandler(self.amount_handler, pattern="^amount_\d+\.?\d*_\d+$"))
+            dp.add_handler(CallbackQueryHandler(self.button_handler, pattern="^(connect_wallet|execute_trade_\d+)$"))
+            dp.add_handler(CallbackQueryHandler(self.amount_handler, pattern="^amount_\d+\.?\d*_\d+$"))
 
             # Start the Bot
             logger.info("Bot is ready to handle messages")
-            await self.application.run_polling()
+            self.updater.start_polling()
+
+            # Run the bot until you press Ctrl-C
+            self.updater.idle()
 
         except Exception as e:
             logger.error(f"Error starting bot: {e}")
             raise
 
 if __name__ == "__main__":
-    import asyncio
     bot = TradingBot()
-    asyncio.run(bot.run())
+    bot.run()
