@@ -9,10 +9,7 @@ from telegram.ext import (
 
 from config import Config
 from wallet_manager import WalletManager
-from dex_connector import DexConnector
-from signal_processor import SignalProcessor
-from chart_analyzer import ChartAnalyzer
-from utils import format_amount, validate_amount, create_trade_message, format_wallet_info
+from utils import format_amount, validate_amount, format_wallet_info
 
 # Logging Setup
 logging.basicConfig(
@@ -21,131 +18,177 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class TradingBot:
+class SolanaWalletBot:
     def __init__(self):
         self.config = Config()
         self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
-        self.dex_connector = DexConnector()
-        self.signal_processor = SignalProcessor()
-        self.chart_analyzer = ChartAnalyzer()
         self.updater = None
+        logger.info("Bot initialisiert")
 
     def start(self, update: Update, context: CallbackContext):
         """Start-Befehl Handler"""
+        user_id = update.effective_user.id
+        logger.info(f"Start-Befehl von User {user_id}")
         update.message.reply_text(
-            self.config.WELCOME_MESSAGE,
+            "🚀 Willkommen beim Solana Wallet Bot!\n\n"
+            "Mit diesem Bot können Sie:\n"
+            "✅ Eine Solana-Wallet erstellen\n"
+            "💰 Ihr Guthaben überprüfen\n"
+            "💸 SOL senden und empfangen\n"
+            "📱 QR-Codes für einfache Transaktionen nutzen\n\n"
+            "Verfügbare Befehle:\n"
+            "/start - Bot starten\n"
+            "/hilfe - Zeigt diese Hilfe an\n"
+            "/wallet - Wallet-Verwaltung\n"
+            "/senden - SOL senden (mit QR-Scanner)\n"
+            "/empfangen - Einzahlungsadresse als QR-Code anzeigen",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔗 Wallet verbinden", callback_data="connect_wallet")],
-                [InlineKeyboardButton("📊 Trading starten", callback_data="start_trading")]
+                [InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")]
             ])
         )
 
     def help_command(self, update: Update, context: CallbackContext):
         """Hilfe-Befehl Handler"""
-        update.message.reply_text(self.config.HELP_MESSAGE)
+        user_id = update.effective_user.id
+        logger.info(f"Hilfe-Befehl von User {user_id}")
+        update.message.reply_text(
+            "📚 Verfügbare Befehle:\n\n"
+            "🔹 Basis Befehle:\n"
+            "/start - Bot starten\n"
+            "/hilfe - Diese Hilfe anzeigen\n\n"
+            "🔹 Wallet Befehle:\n"
+            "/wallet - Wallet-Info anzeigen\n"
+            "/senden - SOL senden (mit QR-Scanner)\n"
+            "/empfangen - Einzahlungsadresse als QR-Code anzeigen\n\n"
+            "❓ Brauchen Sie Hilfe? Nutzen Sie /start um neu zu beginnen!"
+        )
 
     def wallet_command(self, update: Update, context: CallbackContext):
         """Wallet-Befehl Handler"""
+        user_id = update.effective_user.id
+        logger.info(f"Wallet-Befehl von User {user_id}")
         address = self.wallet_manager.get_address()
         if not address:
+            logger.info(f"Keine Wallet für User {user_id}")
             update.message.reply_text(
-                "❌ Keine Wallet verbunden. Bitte zuerst eine Wallet verbinden.",
+                "❌ Keine Wallet verbunden. Bitte zuerst eine Wallet erstellen.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔗 Wallet verbinden", callback_data="connect_wallet")
+                    InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")
                 ]])
             )
             return
 
         balance = self.wallet_manager.get_balance()
+        logger.info(f"Wallet-Info abgerufen für User {user_id}, Balance: {balance}")
         update.message.reply_text(
             format_wallet_info(balance, address),
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("💸 Senden", callback_data="send_sol")],
-                [InlineKeyboardButton("📥 Empfangen", callback_data="receive_sol")]
+                [InlineKeyboardButton("📱 QR-Code anzeigen", callback_data="show_qr")]
             ])
         )
 
-    def trade_command(self, update: Update, context: CallbackContext):
-        """Trade-Befehl Handler"""
+    def send_command(self, update: Update, context: CallbackContext):
+        """Senden-Befehl Handler"""
         if not self.wallet_manager.get_address():
-            update.message.reply_text("❌ Bitte zuerst Wallet verbinden!")
-            return
-
-        active_signals = self.signal_processor.get_active_signals()
-        if not active_signals:
-            update.message.reply_text("🔍 Aktuell keine aktiven Trading Signale verfügbar.")
-            return
-
-        for idx, signal in enumerate(active_signals):
-            message = create_trade_message(signal)
             update.message.reply_text(
-                message,
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("✅ Trade ausführen", callback_data=f"execute_trade_{idx}"),
-                        InlineKeyboardButton("❌ Ignorieren", callback_data=f"ignore_trade_{idx}")
-                    ]
-                ])
+                "❌ Bitte zuerst eine Wallet erstellen!",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")
+                ]])
+            )
+            return
+
+        try:
+            # Starte QR-Code-Scanner
+            address = self.wallet_manager.scan_qr_code()
+            if address:
+                update.message.reply_text(
+                    f"✅ QR-Code gescannt!\n\n"
+                    f"Empfänger-Adresse: `{address}`\n\n"
+                    f"Bitte geben Sie den Betrag ein, den Sie senden möchten (in SOL):",
+                    parse_mode='Markdown'
+                )
+            else:
+                update.message.reply_text(
+                    "❌ Kein QR-Code erkannt. Bitte versuchen Sie es erneut oder "
+                    "geben Sie die Adresse manuell ein im Format:\n"
+                    "ADRESSE BETRAG\n\n"
+                    "Beispiel:\n"
+                    "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 0.1"
+                )
+        except Exception as e:
+            logger.error(f"Fehler beim QR-Scan: {e}")
+            update.message.reply_text(
+                "❌ Fehler beim Öffnen der Kamera. Bitte geben Sie die Adresse manuell ein."
+            )
+
+    def receive_command(self, update: Update, context: CallbackContext):
+        """Empfangen-Befehl Handler"""
+        address = self.wallet_manager.get_address()
+        if not address:
+            update.message.reply_text(
+                "❌ Bitte zuerst eine Wallet erstellen!",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")
+                ]])
+            )
+            return
+
+        try:
+            # Generiere QR-Code
+            qr_bio = self.wallet_manager.generate_qr_code()
+            update.message.reply_photo(
+                photo=qr_bio,
+                caption=f"📱 Ihre Wallet-Adresse als QR-Code:\n\n"
+                f"`{address}`\n\n"
+                f"Scannen Sie den QR-Code, um SOL zu empfangen.",
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Fehler bei QR-Code-Generierung: {e}")
+            update.message.reply_text(
+                f"📥 Ihre Wallet-Adresse zum Empfangen von SOL:\n\n"
+                f"`{address}`",
+                parse_mode='Markdown'
             )
 
     def button_handler(self, update: Update, context: CallbackContext):
         """Callback Query Handler für Buttons"""
         query = update.callback_query
+        user_id = query.from_user.id
+        logger.info(f"Button-Callback von User {user_id}: {query.data}")
         query.answer()
 
-        if query.data == "connect_wallet":
-            # Wallet-Verbindung Logik
+        if query.data == "create_wallet":
+            logger.info(f"Erstelle neue Solana-Wallet für User {user_id}")
             public_key, private_key = self.wallet_manager.create_wallet()
-            query.message.reply_text(
-                f"✅ Neue Wallet erstellt!\n\nAdresse: {public_key}\n\n⚠️ Bitte Private Key sicher aufbewahren!"
-            )
-
-        elif query.data.startswith("execute_trade_"):
-            signal_id = int(query.data.split("_")[-1])
-            query.message.reply_text(
-                "💰 Bitte Handelsbetrag in SOL eingeben:",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("0.1 SOL", callback_data=f"amount_0.1_{signal_id}"),
-                        InlineKeyboardButton("0.5 SOL", callback_data=f"amount_0.5_{signal_id}"),
-                        InlineKeyboardButton("1.0 SOL", callback_data=f"amount_1.0_{signal_id}")
-                    ]
-                ])
-            )
-
-    def amount_handler(self, update: Update, context: CallbackContext):
-        """Handler für Trade-Beträge"""
-        query = update.callback_query
-        query.answer()
-
-        try:
-            amount, signal_id = query.data.split("_")[1:]
-            amount = float(amount)
-            signal_id = int(signal_id)
-
-            signal = self.signal_processor.get_active_signals()[signal_id]
-            success, tx_id = self.dex_connector.execute_trade(
-                self.wallet_manager,
-                signal['pair'],
-                amount,
-                signal['direction'] == 'long'
-            )
-
-            if success:
-                self.signal_processor.mark_signal_executed(signal_id)
+            if public_key and private_key:
+                logger.info(f"Solana-Wallet erfolgreich erstellt für User {user_id}")
                 query.message.reply_text(
-                    f"✅ Trade erfolgreich ausgeführt!\n\nBetrag: {amount} SOL\nTransaktion: {tx_id}"
+                    f"✅ Neue Solana-Wallet erstellt!\n\n"
+                    f"Adresse: `{public_key}`\n\n"
+                    f"🔐 Private Key:\n"
+                    f"`{private_key}`\n\n"
+                    f"⚠️ WICHTIG: Bewahren Sie den Private Key sicher auf! "
+                    f"Er wird benötigt, um auf Ihre Wallet zuzugreifen.\n\n"
+                    f"Nutzen Sie /wallet um Ihre Wallet-Informationen anzuzeigen.",
+                    parse_mode='Markdown'
                 )
             else:
-                query.message.reply_text(
-                    f"❌ Trade fehlgeschlagen: {tx_id}"
-                )
+                logger.error(f"Fehler bei Wallet-Erstellung für User {user_id}")
+                query.message.reply_text("❌ Fehler beim Erstellen der Wallet!")
 
-        except Exception as e:
-            logger.error(f"Fehler bei Trade-Ausführung: {e}")
-            query.message.reply_text(
-                "❌ Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut."
-            )
+        elif query.data == "show_qr":
+            try:
+                qr_bio = self.wallet_manager.generate_qr_code()
+                query.message.reply_photo(
+                    photo=qr_bio,
+                    caption="📱 Scannen Sie diesen QR-Code, um SOL zu senden."
+                )
+            except Exception as e:
+                logger.error(f"Fehler bei QR-Code-Anzeige: {e}")
+                query.message.reply_text("❌ Fehler beim Generieren des QR-Codes.")
 
     def run(self):
         """Startet den Bot"""
@@ -161,11 +204,11 @@ class TradingBot:
             dp.add_handler(CommandHandler("start", self.start))
             dp.add_handler(CommandHandler("hilfe", self.help_command))
             dp.add_handler(CommandHandler("wallet", self.wallet_command))
-            dp.add_handler(CommandHandler("trade", self.trade_command))
+            dp.add_handler(CommandHandler("senden", self.send_command))
+            dp.add_handler(CommandHandler("empfangen", self.receive_command))
 
-            # Callback query handlers
-            dp.add_handler(CallbackQueryHandler(self.button_handler, pattern="^(connect_wallet|execute_trade_\d+)$"))
-            dp.add_handler(CallbackQueryHandler(self.amount_handler, pattern="^amount_\d+\.?\d*_\d+$"))
+            # Callback query handler
+            dp.add_handler(CallbackQueryHandler(self.button_handler))
 
             # Start the Bot
             logger.info("Bot is ready to handle messages")
@@ -179,5 +222,5 @@ class TradingBot:
             raise
 
 if __name__ == "__main__":
-    bot = TradingBot()
+    bot = SolanaWalletBot()
     bot.run()
