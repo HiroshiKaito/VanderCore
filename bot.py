@@ -40,7 +40,7 @@ class SolanaWalletBot:
             "/start - Bot starten\n"
             "/hilfe - Zeigt diese Hilfe an\n"
             "/wallet - Wallet-Verwaltung\n"
-            "/senden - SOL senden (mit QR-Scanner)\n"
+            "/senden - SOL senden (mit QR-Scanner oder manueller Eingabe)\n"
             "/empfangen - Einzahlungsadresse als QR-Code anzeigen",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")]
@@ -58,7 +58,7 @@ class SolanaWalletBot:
             "/hilfe - Diese Hilfe anzeigen\n\n"
             "🔹 Wallet Befehle:\n"
             "/wallet - Wallet-Info anzeigen\n"
-            "/senden - SOL senden (mit QR-Scanner)\n"
+            "/senden - SOL senden (mit QR-Scanner oder manueller Eingabe)\n"
             "/empfangen - Einzahlungsadresse als QR-Code anzeigen\n\n"
             "❓ Brauchen Sie Hilfe? Nutzen Sie /start um neu zu beginnen!"
         )
@@ -99,29 +99,14 @@ class SolanaWalletBot:
             )
             return
 
-        try:
-            # Starte QR-Code-Scanner
-            address = self.wallet_manager.scan_qr_code()
-            if address:
-                update.message.reply_text(
-                    f"✅ QR-Code gescannt!\n\n"
-                    f"Empfänger-Adresse: `{address}`\n\n"
-                    f"Bitte geben Sie den Betrag ein, den Sie senden möchten (in SOL):",
-                    parse_mode='Markdown'
-                )
-            else:
-                update.message.reply_text(
-                    "❌ Kein QR-Code erkannt. Bitte versuchen Sie es erneut oder "
-                    "geben Sie die Adresse manuell ein im Format:\n"
-                    "ADRESSE BETRAG\n\n"
-                    "Beispiel:\n"
-                    "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 0.1"
-                )
-        except Exception as e:
-            logger.error(f"Fehler beim QR-Scan: {e}")
-            update.message.reply_text(
-                "❌ Fehler beim Öffnen der Kamera. Bitte geben Sie die Adresse manuell ein."
-            )
+        update.message.reply_text(
+            "💸 SOL senden\n\n"
+            "Wie möchten Sie die Empfängeradresse eingeben?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📱 QR-Code scannen", callback_data="scan_qr")],
+                [InlineKeyboardButton("✍️ Adresse manuell eingeben", callback_data="manual_address")]
+            ])
+        )
 
     def receive_command(self, update: Update, context: CallbackContext):
         """Empfangen-Befehl Handler"""
@@ -189,6 +174,37 @@ class SolanaWalletBot:
             except Exception as e:
                 logger.error(f"Fehler bei QR-Code-Anzeige: {e}")
                 query.message.reply_text("❌ Fehler beim Generieren des QR-Codes.")
+
+        elif query.data == "scan_qr":
+            try:
+                query.message.reply_text("📱 Bitte halten Sie einen QR-Code vor die Kamera...")
+                address = self.wallet_manager.scan_qr_code()
+                if address:
+                    query.message.reply_text(
+                        f"✅ QR-Code gescannt!\n\n"
+                        f"Empfänger-Adresse: `{address}`\n\n"
+                        f"Bitte geben Sie den Betrag ein, den Sie senden möchten (in SOL):",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    query.message.reply_text(
+                        "❌ Kein QR-Code erkannt. Bitte versuchen Sie es erneut oder "
+                        "wählen Sie 'Adresse manuell eingeben'."
+                    )
+            except Exception as e:
+                logger.error(f"Fehler beim QR-Scan: {e}")
+                query.message.reply_text(
+                    "❌ Fehler beim Öffnen der Kamera. Bitte wählen Sie 'Adresse manuell eingeben'."
+                )
+
+        elif query.data == "manual_address":
+            query.message.reply_text(
+                "✍️ Bitte geben Sie die Empfängeradresse und den Betrag im Format ein:\n"
+                "ADRESSE BETRAG\n\n"
+                "Beispiel:\n"
+                "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU 0.1"
+            )
+
 
     def run(self):
         """Startet den Bot"""

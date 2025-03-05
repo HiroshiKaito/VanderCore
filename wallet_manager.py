@@ -15,8 +15,16 @@ logger = logging.getLogger(__name__)
 class WalletManager:
     def __init__(self, rpc_url: str):
         """Initialisiert den Wallet Manager mit echter Solana-Verbindung"""
-        self.client = Client(rpc_url)
+        logger.info(f"Verbinde mit Solana RPC: {rpc_url}")
+        # Ensure we're using the correct commitment level for devnet
+        self.client = Client(rpc_url, commitment="confirmed")
         self.keypair = None
+        # Verify connection and network
+        try:
+            version = self.client.get_version()
+            logger.info(f"Verbunden mit Solana {version['result']['solana-core']}")
+        except Exception as e:
+            logger.error(f"Fehler bei der Verbindung zum Solana-Netzwerk: {e}")
         logger.info("WalletManager mit Solana-Verbindung initialisiert")
 
     def create_wallet(self) -> tuple[str, str]:
