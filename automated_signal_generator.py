@@ -56,18 +56,21 @@ class AutomatedSignalGenerator:
                 logger.error("Keine Marktdaten verfügbar oder ungültiger Preis")
                 return
 
+            current_price = float(market_info.get('price', 0))
+            logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
+
             # Aktualisiere Chart-Daten
             self.chart_analyzer.update_price_data(self.dex_connector, "SOL")
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
+            # Detaillierte Marktanalyse Logs
             logger.info(f"Marktanalyse - Trend: {trend_analysis.get('trend')}, "
                        f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
+            logger.info(f"Support/Resistance - Support: {support_resistance.get('support', 0):.2f}, "
+                       f"Resistance: {support_resistance.get('resistance', 0):.2f}")
 
             # Erstelle Signal basierend auf Analyse
-            current_price = float(market_info.get('price', 0))
-            logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
-
             signal = self._create_signal_from_analysis(
                 current_price, trend_analysis, support_resistance
             )
@@ -78,6 +81,12 @@ class AutomatedSignalGenerator:
                 if processed_signal:
                     logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
                     if processed_signal['signal_quality'] >= 4:  # Reduziert von 5 auf 4
+                        logger.info(f"Signal Details:"
+                                  f"\n - Richtung: {processed_signal['direction']}"
+                                  f"\n - Entry: {processed_signal['entry']:.2f}"
+                                  f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
+                                  f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
+                                  f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
                         self._notify_users_about_signal(processed_signal)
                         self.total_signals_generated += 1
                         logger.info(f"🚨 Trading-Signal gesendet: {processed_signal['pair']}")
@@ -112,18 +121,18 @@ class AutomatedSignalGenerator:
             if trend == 'aufwärts':
                 entry = current_price
                 stop_loss = max(support, current_price * 0.995)  # 0.5% Stop Loss
-                take_profit = min(resistance, current_price * 1.05)  # 5% Take Profit
+                take_profit = min(resistance, current_price * 1.015)  # Reduziert von 5% auf 1.5%
                 direction = 'long'
             else:  # abwärts
                 entry = current_price
                 stop_loss = min(resistance, current_price * 1.005)  # 0.5% Stop Loss
-                take_profit = max(support, current_price * 0.95)  # 5% Take Profit
+                take_profit = max(support, current_price * 0.985)  # Reduziert von 5% auf 1.5%
                 direction = 'short'
 
             # Berechne erwarteten Profit
             expected_profit = abs((take_profit - entry) / entry * 100)
 
-            if expected_profit < 1:  # Reduziert von 2% auf 1%
+            if expected_profit < 0.5:  # Reduziert von 1% auf 0.5%
                 logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
                 return None
 
@@ -170,8 +179,14 @@ class AutomatedSignalGenerator:
             # Sehr milde Qualitätskriterien
             if strength < 0.1:  # Reduziert von 0.2% auf 0.1%
                 quality *= 0.95  # Nur leichte Abwertung
-            if expected_profit < 1:  # Reduziert von 2% auf 1%
+            if expected_profit < 0.5:  # Reduziert von 1% auf 0.5%
                 quality *= 0.95  # Nur leichte Abwertung
+
+            logger.debug(f"Signal Qualitätsberechnung:"
+                        f"\n - Trend Score: {trend_score}"
+                        f"\n - Strength Score: {strength_score}"
+                        f"\n - Profit Score: {profit_score}"
+                        f"\n - Finale Qualität: {quality:.1f}/10")
 
             return round(quality, 1)
 

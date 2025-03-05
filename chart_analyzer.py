@@ -124,6 +124,12 @@ class ChartAnalyzer:
             trend = 'aufwärts' if last_price > first_price else 'abwärts'
             strength = abs((last_price - first_price) / first_price * 100)  # Prozentuale Änderung
 
+            # Reduziere die Mindest-Trendstärke für Signale
+            min_strength = 0.05  # Reduziert von 0.1% auf 0.05% für höhere Sensitivität
+            if strength < min_strength:
+                trend = 'neutral'
+                strength = 0
+
             logger.info(f"Trendanalyse: {trend}, Stärke: {strength:.2f}%, "
                        f"Von: {first_price:.2f} USDC -> Zu: {last_price:.2f} USDC")
 
