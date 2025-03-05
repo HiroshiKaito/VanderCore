@@ -185,6 +185,19 @@ class AutomatedSignalGenerator:
             # Hole das aktuelle Wallet-Guthaben
             balance = self.bot.wallet_manager.get_balance()
 
+            # Erstelle Prediction Chart
+            logger.info("Erstelle Prediction Chart für Trading Signal...")
+            chart_image = None
+            try:
+                chart_image = self.chart_analyzer.create_prediction_chart(
+                    entry_price=signal['entry'],
+                    target_price=signal['take_profit'],
+                    stop_loss=signal['stop_loss']
+                )
+            except Exception as chart_error:
+                logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
+                # Fahre mit der Signal-Nachricht fort, auch wenn das Chart fehlschlägt
+
             signal_message = (
                 f"⚡ SCHNELLES TRADING SIGNAL!\n\n"
                 f"Pair: {signal['pair']}\n"
@@ -206,13 +219,41 @@ class AutomatedSignalGenerator:
                 ]
             ]
 
-            # Sende Nachricht an alle aktiven Bot-Benutzer
+            # Sende Nachricht mit Chart an alle aktiven Bot-Benutzer
             if hasattr(self.bot, 'config') and hasattr(self.bot.config, 'ADMIN_USER_ID'):
-                self.bot.updater.bot.send_message(
-                    chat_id=self.bot.config.ADMIN_USER_ID,
-                    text=signal_message,
-                    reply_markup={"inline_keyboard": keyboard}
-                )
+                try:
+                    # Sende zuerst das Chart-Bild
+                    if chart_image:
+                        logger.info("Sende Prediction Chart...")
+                        self.bot.updater.bot.send_photo(
+                            chat_id=self.bot.config.ADMIN_USER_ID,
+                            photo=chart_image,
+                            caption="📊 Preisprognose für das Trading Signal"
+                        )
+                        logger.info("Prediction Chart erfolgreich gesendet")
+                    else:
+                        logger.warning("Kein Chart-Bild verfügbar für das Signal")
+
+                    # Dann sende die Signal-Details
+                    logger.info("Sende Signal-Details...")
+                    self.bot.updater.bot.send_message(
+                        chat_id=self.bot.config.ADMIN_USER_ID,
+                        text=signal_message,
+                        reply_markup={"inline_keyboard": keyboard}
+                    )
+                    logger.info("Trading Signal erfolgreich gesendet")
+
+                except Exception as send_error:
+                    logger.error(f"Fehler beim Senden der Nachrichten: {send_error}")
+                    # Versuche es erneut nur mit der Text-Nachricht
+                    try:
+                        self.bot.updater.bot.send_message(
+                            chat_id=self.bot.config.ADMIN_USER_ID,
+                            text=signal_message + "\n\n⚠️ Chart konnte nicht generiert werden.",
+                            reply_markup={"inline_keyboard": keyboard}
+                        )
+                    except Exception as fallback_error:
+                        logger.error(f"Auch Fallback-Nachricht fehlgeschlagen: {fallback_error}")
 
         except Exception as e:
             logger.error(f"Fehler beim Senden der Signal-Benachrichtigung: {e}")

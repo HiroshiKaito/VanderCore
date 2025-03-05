@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import logging
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,65 @@ class ChartAnalyzer:
 
         except Exception as e:
             logger.error(f"Fehler beim Aktualisieren der Preisdaten: {e}")
+
+    def create_prediction_chart(self, entry_price: float, target_price: float, stop_loss: float) -> BytesIO:
+        """Erstellt einen Chart mit Vorhersage und Ein-/Ausstiegspunkten"""
+        try:
+            logger.info(f"Erstelle Prediction Chart - Entry: {entry_price:.2f}, Target: {target_price:.2f}, Stop: {stop_loss:.2f}")
+            plt.figure(figsize=(10, 6))
+            plt.style.use('dark_background')  # Dunkles Theme für bessere Lesbarkeit
+
+            # Plot Preisdaten
+            plt.plot(self.data['timestamp'], self.data['price'], 
+                    color='#4CAF50', linewidth=2, label='SOL/USDC')
+
+            # Aktuelle Zeit für Vorhersagepunkte
+            current_time = self.data['timestamp'].iloc[-1]
+            future_time = current_time + timedelta(minutes=5)  # Projektion 5 Minuten in die Zukunft
+
+            # Entry Point (Grün)
+            plt.scatter([current_time], [entry_price], color='lime', s=100, 
+                       marker='^', label='Einstieg', zorder=5)
+
+            # Take Profit (Blau)
+            plt.scatter([future_time], [target_price], color='cyan', s=100, 
+                       marker='*', label='Take Profit', zorder=5)
+
+            # Stop Loss (Rot)
+            plt.scatter([future_time], [stop_loss], color='red', s=100, 
+                       marker='v', label='Stop Loss', zorder=5)
+
+            # Gestrichelte Linie für Preisprojektion
+            plt.plot([current_time, future_time], [entry_price, target_price], 
+                    'g--', alpha=0.5)
+            plt.plot([current_time, future_time], [entry_price, stop_loss], 
+                    'r--', alpha=0.5)
+
+            # Support & Resistance
+            if self.last_support and self.last_resistance:
+                plt.axhline(y=self.last_support, color='gray', linestyle='--', alpha=0.3)
+                plt.axhline(y=self.last_resistance, color='gray', linestyle='--', alpha=0.3)
+
+            # Formatierung
+            plt.title('SOL/USDC Preisprognose', fontsize=12, pad=15)
+            plt.xlabel('Zeit')
+            plt.ylabel('Preis (USDC)')
+            plt.grid(True, alpha=0.2)
+            plt.legend(loc='upper left')
+
+            # Speichere Chart in BytesIO
+            img_bio = BytesIO()
+            plt.savefig(img_bio, format='png', bbox_inches='tight', 
+                       facecolor='#1a1a1a', edgecolor='none')
+            img_bio.seek(0)
+            plt.close()
+
+            logger.info("Prediction Chart erfolgreich erstellt")
+            return img_bio
+
+        except Exception as e:
+            logger.error(f"Fehler beim Erstellen des Prediction Charts: {e}")
+            return None
 
     def analyze_trend(self) -> Dict[str, Any]:
         """Analysiert den aktuellen Trend"""

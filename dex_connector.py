@@ -9,9 +9,11 @@ logger = logging.getLogger(__name__)
 class DexConnector:
     def __init__(self):
         self.session = None
-        # Korrigierte API URL und SOL Token Adresse
+        # Jupiter API URL und SOL Token Adresse
         self.base_url = "https://quote-api.jup.ag/v6"
         self.sol_usdc_pair = "SOL/USDC"
+        self.sol_token = "So11111111111111111111111111111111111111112"  # Native SOL Token
+        self.usdc_token = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC Token
 
     def initialize(self):
         """Initialisiert die DEX-Verbindung"""
@@ -32,9 +34,14 @@ class DexConnector:
             logger.info(f"Hole Marktdaten für Token: {token_address}")
 
             # Jupiter Quote API für SOL/USDC
-            url = f"{self.base_url}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000"
+            quote_url = f"{self.base_url}/quote"
+            params = {
+                "inputMint": self.sol_token,
+                "outputMint": self.usdc_token,
+                "amount": 1000000000  # 1 SOL in Lamports
+            }
 
-            response = self.session.get(url)
+            response = self.session.get(quote_url, params=params)
             response.raise_for_status()
 
             data = response.json()
@@ -74,6 +81,48 @@ class DexConnector:
                 'timestamp': None
             }
 
+    def execute_trade(self, 
+                     wallet_manager,
+                     token_address: str,
+                     amount: float,
+                     is_buy: bool) -> Tuple[bool, str]:
+        """Führt einen Trade auf Jupiter DEX aus"""
+        try:
+            # 1. Hole aktuelle Marktdaten und Quote
+            quote_url = f"{self.base_url}/quote"
+            params = {
+                "inputMint": self.sol_token if is_buy else self.usdc_token,
+                "outputMint": self.usdc_token if is_buy else self.sol_token,
+                "amount": int(amount * (1e9 if is_buy else 1e6))  # Konvertiere zu Lamports oder USDC Decimals
+            }
+
+            quote_response = self.session.get(quote_url, params=params)
+            quote_response.raise_for_status()
+            quote_data = quote_response.json()
+
+            # 2. Erstelle die Transaktion
+            tx_url = f"{self.base_url}/swap"
+            tx_data = {
+                "quoteResponse": quote_data,
+                "userPublicKey": wallet_manager.get_address(),
+                "wrapUnwrapSOL": True
+            }
+
+            tx_response = self.session.post(tx_url, json=tx_data)
+            tx_response.raise_for_status()
+            tx_result = tx_response.json()
+
+            # 3. Signiere und sende die Transaktion
+            signed_tx = wallet_manager.sign_transaction(tx_result['swapTransaction'])
+            tx_hash = wallet_manager.send_transaction(signed_tx)
+
+            logger.info(f"Trade erfolgreich ausgeführt - Hash: {tx_hash}")
+            return True, f"Trade erfolgreich - Transaktion: {tx_hash}"
+
+        except Exception as e:
+            logger.error(f"Fehler beim Trade: {e}")
+            return False, str(e)
+
     def get_price(self, token_address: str) -> float:
         """Holt den aktuellen Token-Preis"""
         try:
@@ -85,27 +134,3 @@ class DexConnector:
         except Exception as e:
             logger.error(f"Fehler beim Abrufen des Preises: {e}")
             return 0.0
-
-    def execute_trade(self, 
-                     wallet_manager,
-                     token_address: str,
-                     amount: float,
-                     is_buy: bool) -> Tuple[bool, str]:
-        """Führt einen Trade aus"""
-        try:
-            if not self.get_price(token_address):
-                return False, "Keine gültigen Preisdaten verfügbar"
-
-            instruction_data = {
-                "token": token_address,
-                "amount": amount,
-                "side": "buy" if is_buy else "sell",
-                "wallet": wallet_manager.get_address()
-            }
-
-            logger.info(f"Trade ausgeführt: {instruction_data}")
-            return True, "Trade erfolgreich ausgeführt"
-
-        except Exception as e:
-            logger.error(f"Fehler beim Trade: {e}")
-            return False, str(e)
