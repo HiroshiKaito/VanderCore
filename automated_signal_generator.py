@@ -52,8 +52,8 @@ class AutomatedSignalGenerator:
 
             # Hole aktuelle Marktdaten mit hoher Priorität
             market_info = self.dex_connector.get_market_info("SOL")
-            if not market_info:
-                logger.error("Keine Marktdaten verfügbar")
+            if not market_info or market_info.get('price', 0) == 0:
+                logger.error("Keine Marktdaten verfügbar oder ungültiger Preis")
                 return
 
             # Aktualisiere Chart-Daten
@@ -66,6 +66,8 @@ class AutomatedSignalGenerator:
 
             # Erstelle Signal basierend auf Analyse
             current_price = float(market_info.get('price', 0))
+            logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
+
             signal = self._create_signal_from_analysis(
                 current_price, trend_analysis, support_resistance
             )
@@ -74,10 +76,17 @@ class AutomatedSignalGenerator:
                 # Verarbeite und sende Signal mit hoher Priorität
                 processed_signal = self.signal_processor.process_signal(signal)
                 if processed_signal:
-                    self._notify_users_about_signal(processed_signal)
-                    self.total_signals_generated += 1
-                    logger.info(f"🚨 Trading-Signal generiert: {processed_signal['pair']}, "
-                              f"Qualität: {processed_signal['signal_quality']}/10")
+                    logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
+                    if processed_signal['signal_quality'] >= 7:
+                        self._notify_users_about_signal(processed_signal)
+                        self.total_signals_generated += 1
+                        logger.info(f"🚨 Trading-Signal gesendet: {processed_signal['pair']}")
+                    else:
+                        logger.info(f"Signal ignoriert - Qualität zu niedrig: {processed_signal['signal_quality']}/10")
+                else:
+                    logger.info("Signal konnte nicht verarbeitet werden")
+            else:
+                logger.info("Kein Signal basierend auf aktueller Analyse")
 
             logger.info(f"Schnellanalyse abgeschlossen. Signals: {self.total_signals_generated}")
 
