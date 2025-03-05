@@ -67,14 +67,33 @@ class WalletManager:
             logger.error(f"Fehler beim Abrufen des Guthabens: {e}")
             return 0.0
 
-    async def send_sol(self, to_address: str, amount: float) -> tuple[bool, str]:
+    def estimate_transaction_fee(self) -> float:
+        """Schätzt die Transaktionsgebühren für eine Standard-Transaktion"""
+        try:
+            # Aktuelle Gebühr für eine Standard-Transaktion auf Solana
+            # Dies ist ein Schätzwert, der sich je nach Netzwerkauslastung ändern kann
+            return 0.000005  # Standard Solana Transaktionsgebühr
+        except Exception as e:
+            logger.error(f"Fehler bei der Gebührenschätzung: {e}")
+            return 0.000005  # Fallback auf Standard-Gebühr
+
+    def send_sol(self, to_address: str, amount: float) -> tuple[bool, str]:
         """Sendet SOL an eine andere Adresse"""
         try:
             if not self.keypair:
                 return False, "Keine Wallet geladen"
 
+            # Berechne Transaktionsgebühren
+            fee = self.estimate_transaction_fee()
+            total_amount = amount + fee
+
+            # Prüfe ob genügend Guthaben vorhanden ist
+            balance = self.get_balance()
+            if balance < total_amount:
+                return False, f"Nicht genügend Guthaben. Benötigt: {total_amount} SOL (inkl. {fee} SOL Gebühren)"
+
             # Konvertiere SOL zu Lamports
-            lamports = int(amount * 1e9)
+            lamports = int(total_amount * 1e9) #Corrected this line to include fees in lamports calculation
 
             # Erstelle die Transaktion
             transfer_params = TransferParams(
@@ -86,7 +105,7 @@ class WalletManager:
             transaction = Transaction().add(transfer(transfer_params))
 
             # Sende die Transaktion
-            result = await self.client.send_transaction(
+            result = self.client.send_transaction(
                 transaction,
                 self.keypair
             )
