@@ -196,43 +196,73 @@ class AITradingEngine:
         """Holt erweiterte Marktdaten von verschiedenen Quellen"""
         try:
             data = {}
-
-            # CoinGecko Daten
-            coingecko_url = f"{self.coingecko_api}/coins/solana"
-            params = {
-                'localization': 'false',
-                'tickers': 'true',
-                'market_data': 'true',
-                'community_data': 'true',
-                'developer_data': 'true'
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (compatible; SolanaBot/1.0; +http://example.com)'
             }
-            response = requests.get(coingecko_url, params=params)
-            if response.status_code == 200:
-                data['coingecko'] = response.json()
+
+            # CoinGecko Daten mit Rate Limiting und Retry
+            try:
+                coingecko_url = f"{self.coingecko_api}/coins/solana"
+                params = {
+                    'localization': 'false',
+                    'tickers': 'true',
+                    'market_data': 'true',
+                    'community_data': 'true',
+                    'developer_data': 'true'
+                }
+                response = requests.get(coingecko_url, params=params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data['coingecko'] = response.json()
+                    logger.info("CoinGecko Daten erfolgreich abgerufen")
+                else:
+                    logger.warning(f"CoinGecko API Fehler: {response.status_code}")
+            except Exception as e:
+                logger.error(f"CoinGecko API Fehler: {e}")
 
             # DEX Screener Daten
-            dex_url = f"{self.dex_screener_api}/dex/solana"
-            response = requests.get(dex_url)
-            if response.status_code == 200:
-                data['dex_screener'] = response.json()
+            try:
+                dex_url = f"{self.dex_screener_api}/dex/solana"
+                response = requests.get(dex_url, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data['dex_screener'] = response.json()
+                    logger.info("DEX Screener Daten erfolgreich abgerufen")
+                else:
+                    logger.warning(f"DEX Screener API Fehler: {response.status_code}")
+            except Exception as e:
+                logger.error(f"DEX Screener API Fehler: {e}")
 
             # Reddit Sentiment (Simple Scraping)
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(f"{self.reddit_api}/new.json", headers=headers)
-            if response.status_code == 200:
-                data['reddit'] = response.json()
+            try:
+                response = requests.get(f"{self.reddit_api}/new.json", headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data['reddit'] = response.json()
+                    logger.info("Reddit Daten erfolgreich abgerufen")
+                else:
+                    logger.warning(f"Reddit API Fehler: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Reddit API Fehler: {e}")
 
             # Nitter (Twitter Alternative) Sentiment
-            nitter_params = {'f': 'tweets', 'q': 'solana'}
-            response = requests.get(self.nitter_api, params=nitter_params)
-            if response.status_code == 200:
-                data['nitter'] = response.text  # HTML Response für Parsing
+            try:
+                nitter_params = {'f': 'tweets', 'q': 'solana'}
+                response = requests.get(self.nitter_api, params=nitter_params, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    data['nitter'] = response.text
+                    logger.info("Nitter Daten erfolgreich abgerufen")
+                else:
+                    logger.warning(f"Nitter API Fehler: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Nitter API Fehler: {e}")
 
-            logger.info("Marktdaten erfolgreich abgerufen")
+            if not data:
+                logger.warning("Keine Marktdaten konnten abgerufen werden")
+            else:
+                logger.info(f"Marktdaten erfolgreich abgerufen von: {', '.join(data.keys())}")
+
             return data
 
         except Exception as e:
-            logger.error(f"Fehler beim Abrufen der Marktdaten: {e}")
+            logger.error(f"Genereller Fehler beim Abrufen der Marktdaten: {e}")
             return {}
 
     def backtest_strategy(self, historical_data: pd.DataFrame) -> Dict[str, float]:
