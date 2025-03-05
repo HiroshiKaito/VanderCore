@@ -19,6 +19,8 @@ class AutomatedSignalGenerator:
         self.is_running = False
         self.last_check_time = None
         self.total_signals_generated = 0
+        self.last_signal_time = None
+        self.signal_intervals = []  # Speichert die Zeitintervalle zwischen Signalen
 
     def start(self):
         """Startet den automatischen Signal-Generator"""
@@ -47,6 +49,11 @@ class AutomatedSignalGenerator:
         try:
             current_time = datetime.now(pytz.UTC)
             self.last_check_time = current_time
+
+            # Berechne Zeit seit letztem Signal
+            if self.last_signal_time:
+                time_since_last = (current_time - self.last_signal_time).total_seconds() / 60  # in Minuten
+                logger.info(f"Zeit seit letztem Signal: {time_since_last:.1f} Minuten")
 
             logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
 
@@ -89,7 +96,19 @@ class AutomatedSignalGenerator:
                                   f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
                         self._notify_users_about_signal(processed_signal)
                         self.total_signals_generated += 1
-                        logger.info(f"🚨 Trading-Signal gesendet: {processed_signal['pair']}")
+
+                        # Aktualisiere Signal-Statistiken
+                        current_time = datetime.now(pytz.UTC)
+                        if self.last_signal_time:
+                            interval = (current_time - self.last_signal_time).total_seconds() / 60
+                            self.signal_intervals.append(interval)
+                            avg_interval = sum(self.signal_intervals) / len(self.signal_intervals)
+                            logger.info(f"🚨 Trading-Signal gesendet: {processed_signal['pair']}")
+                            logger.info(f"📊 Signal-Statistiken:"
+                                      f"\n - Durchschnittliches Intervall: {avg_interval:.1f} Minuten"
+                                      f"\n - Gesamtzahl Signale: {self.total_signals_generated}")
+
+                        self.last_signal_time = current_time
                     else:
                         logger.info(f"Signal ignoriert - Qualität zu niedrig: {processed_signal['signal_quality']}/10")
                 else:
@@ -110,7 +129,7 @@ class AutomatedSignalGenerator:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
 
-            if trend == 'neutral' or strength < 0.1:  # Reduziert von 0.2% auf 0.1%
+            if trend == 'neutral' or strength < 0.05:  # Reduziert auf 0.05% für mehr Signale
                 logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength}%")
                 return None
 
@@ -118,31 +137,43 @@ class AutomatedSignalGenerator:
             support = support_resistance.get('support', 0)
             resistance = support_resistance.get('resistance', 0)
 
+            # Dynamische Take-Profit-Berechnung basierend auf Trendstärke
+            base_tp_percent = 0.015  # 1.5% Basis Take-Profit
+            # Erhöhe Take-Profit bei stärkerem Trend
+            tp_multiplier = min(3.0, 1.0 + (strength / 100) * 10)  # Max 3x Basis-TP
+            dynamic_tp_percent = base_tp_percent * tp_multiplier
+
             if trend == 'aufwärts':
                 entry = current_price
                 stop_loss = max(support, current_price * 0.995)  # 0.5% Stop Loss
-                take_profit = min(resistance, current_price * 1.015)  # Reduziert von 5% auf 1.5%
+                # Berechne dynamisches Take-Profit, maximal bis zum Resistance-Level
+                take_profit = min(resistance, current_price * (1 + dynamic_tp_percent))
                 direction = 'long'
             else:  # abwärts
                 entry = current_price
                 stop_loss = min(resistance, current_price * 1.005)  # 0.5% Stop Loss
-                take_profit = max(support, current_price * 0.985)  # Reduziert von 5% auf 1.5%
+                # Berechne dynamisches Take-Profit, maximal bis zum Support-Level
+                take_profit = max(support, current_price * (1 - dynamic_tp_percent))
                 direction = 'short'
 
             # Berechne erwarteten Profit
             expected_profit = abs((take_profit - entry) / entry * 100)
 
-            if expected_profit < 0.5:  # Reduziert von 1% auf 0.5%
+            if expected_profit < 0.3:  # Reduziert auf 0.3% für mehr Signale
                 logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
                 return None
 
             signal_quality = self._calculate_signal_quality(trend_analysis, strength, expected_profit)
-            if signal_quality < 4:  # Reduziert von 5 auf 4
+            if signal_quality < 3:  # Reduziert auf 3 für mehr Signale
                 logger.info(f"Kein Signal - Qualität zu niedrig: {signal_quality}/10")
                 return None
 
-            logger.info(f"Neues Signal erstellt - Qualität: {signal_quality}/10, "
-                       f"Erwarteter Profit: {expected_profit:.1f}%")
+            logger.info(f"Neues Signal erstellt:"
+                       f"\n - Trend: {trend}"
+                       f"\n - Trendstärke: {strength:.2f}%"
+                       f"\n - Take-Profit-Multiplikator: {tp_multiplier:.1f}x"
+                       f"\n - Erwarteter Profit: {expected_profit:.1f}%"
+                       f"\n - Signalqualität: {signal_quality}/10")
 
             return {
                 'pair': 'SOL/USD',
@@ -154,7 +185,8 @@ class AutomatedSignalGenerator:
                 'dex_connector': self.dex_connector,
                 'token_address': "SOL",
                 'expected_profit': expected_profit,
-                'signal_quality': signal_quality
+                'signal_quality': signal_quality,
+                'trend_strength': strength
             }
 
         except Exception as e:
@@ -164,31 +196,46 @@ class AutomatedSignalGenerator:
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], strength: float, expected_profit: float) -> float:
         """Berechnet die Qualität eines Signals (0-10) - Optimierte Version"""
         try:
-            # Gewichte verschiedene Faktoren - Angepasst für häufigere Signale
-            trend_score = 8 if trend_analysis['trend'] == 'aufwärts' else 7
-            strength_score = min(strength * 25, 10)  # Maximale Sensitivität
-            profit_score = min(expected_profit * 2, 10)  # 5% Profit = max Score
+            # Grundlegende Trend-Bewertung
+            trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
+
+            # Trendstärke-Bewertung
+            strength_score = min(strength * 30, 10)  # Erhöhte Sensitivität
+
+            # Profit-Bewertung - Progressive Skala
+            if expected_profit <= 1.0:
+                profit_score = expected_profit * 5  # 0.5% = 2.5 Punkte
+            elif expected_profit <= 2.0:
+                profit_score = 5 + (expected_profit - 1.0) * 3  # 1.5% = 6.5 Punkte
+            else:
+                profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
+
+            # Dynamische Gewichtung basierend auf Marktsituation
+            if strength > 0.2:  # Starker Trend
+                weights = (0.2, 0.5, 0.3)  # Mehr Gewicht auf Trendstärke
+            elif expected_profit > 1.5:  # Hoher potenzieller Profit
+                weights = (0.3, 0.3, 0.4)  # Mehr Gewicht auf Profit
+            else:
+                weights = (0.3, 0.4, 0.3)  # Ausgewogene Gewichtung
 
             # Gewichtete Summe
             quality = (
-                trend_score * 0.3 +  # Trend
-                strength_score * 0.4 +  # Marktstärke am wichtigsten
-                profit_score * 0.3  # Profit
+                trend_base * weights[0] +  # Trend-Basis
+                strength_score * weights[1] +  # Trendstärke
+                profit_score * weights[2]  # Profit-Potenzial
             )
 
-            # Sehr milde Qualitätskriterien
-            if strength < 0.1:  # Reduziert von 0.2% auf 0.1%
-                quality *= 0.95  # Nur leichte Abwertung
-            if expected_profit < 0.5:  # Reduziert von 1% auf 0.5%
-                quality *= 0.95  # Nur leichte Abwertung
+            # Bonus für besonders starke Signale
+            if strength > 0.3 and expected_profit > 2.0:
+                quality *= 1.1  # 10% Bonus
 
             logger.debug(f"Signal Qualitätsberechnung:"
-                        f"\n - Trend Score: {trend_score}"
-                        f"\n - Strength Score: {strength_score}"
-                        f"\n - Profit Score: {profit_score}"
+                        f"\n - Trend Score: {trend_base} (Gewicht: {weights[0]:.1f})"
+                        f"\n - Strength Score: {strength_score} (Gewicht: {weights[1]:.1f})"
+                        f"\n - Profit Score: {profit_score} (Gewicht: {weights[2]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
-            return round(quality, 1)
+            return round(min(quality, 10), 1)
 
         except Exception as e:
             logger.error(f"Fehler bei der Qualitätsberechnung: {e}")
