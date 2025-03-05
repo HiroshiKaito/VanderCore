@@ -3,7 +3,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Any
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-import pandas_ta as ta
+import ta  # Verwende direkt ta statt pandas_ta
 
 # Importiere TensorFlow mit Error Handling
 try:
@@ -34,7 +34,7 @@ class AITradingEngine:
         self.reddit_api = "https://www.reddit.com/r/solana"
         self.nitter_api = "https://nitter.net/search"
 
-        # Initialisiere TensorFlow Session wenn verfügbar
+        # Initialisiere TensorFlow wenn verfügbar
         if TF_AVAILABLE:
             self._setup_gpu()
             self._build_model()
@@ -57,6 +57,223 @@ class AITradingEngine:
                 logger.info("Keine GPU gefunden - nutze CPU")
         except Exception as e:
             logger.warning(f"GPU Setup fehlgeschlagen: {e}")
+
+    def prepare_features(self, price_data: pd.DataFrame) -> np.ndarray:
+        """Bereitet Features für das ML-Modell vor"""
+        if not TF_AVAILABLE:
+            return np.array([])
+
+        try:
+            df = price_data.copy()
+
+            # Technische Indikatoren mit ta statt pandas_ta
+            df['rsi'] = ta.momentum.rsi(df['close'], window=14)
+            macd = ta.trend.macd(df['close'])
+            df['macd'] = macd.iloc[:, 0]
+            bb = ta.volatility.BollingerBands(df['close'])
+            df['bb_upper'] = bb.bollinger_hband()
+            df['bb_lower'] = bb.bollinger_lband()
+            df['volume_sma'] = ta.trend.sma_indicator(df['volume'], window=20)
+
+            # Preisbewegungen
+            df['price_change'] = df['close'].pct_change()
+            df['volatility'] = df['close'].rolling(window=20).std()
+            df['volume_change'] = df['volume'].pct_change()
+            df['trend_strength'] = abs(df['price_change'].rolling(window=10).mean())
+
+            # Feature-Normalisierung
+            feature_columns = [
+                'close', 'volume', 'rsi', 'macd', 'bb_upper', 'bb_lower',
+                'price_change', 'volatility', 'volume_change', 'trend_strength'
+            ]
+
+            # Entferne NaN-Werte
+            df = df.fillna(method='ffill').fillna(method='bfill')
+
+            df_scaled = pd.DataFrame(
+                self.scaler.fit_transform(df[feature_columns]),
+                columns=feature_columns
+            )
+
+            # Erstelle Sequenzen
+            sequences = []
+            for i in range(len(df_scaled) - 60):
+                sequences.append(df_scaled.iloc[i:i+60].values)
+
+            return np.array(sequences)
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")
+            return np.array([])
+
+    def _build_model(self):
+        """Erstellt das LSTM-Modell"""
+        if not TF_AVAILABLE:
+            return
+
+        try:
+            model = Sequential([
+                LSTM(128, return_sequences=True, input_shape=(60, 10)),  # Angepasst an Feature-Anzahl
+                Dropout(0.3),
+                LSTM(64, return_sequences=False),
+                Dropout(0.3),
+                Dense(32, activation='relu'),
+                Dense(1, activation='linear')
+            ])
+
+            model.compile(
+                optimizer=Adam(learning_rate=0.001),
+                loss='huber',
+                metrics=['mae', 'mse']
+            )
+
+            self.model = model
+            logger.info("LSTM Modell erfolgreich erstellt")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Erstellen des Models: {e}")
+            self.model = None
+
+    def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
+        """Sagt die nächste Kursbewegung vorher"""
+        try:
+            if not TF_AVAILABLE or self.model is None:
+                return self._predict_with_technical_analysis(current_data)
+
+            X = self.prepare_features(current_data)
+            if len(X) == 0:
+                return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
+
+            prediction = self.model.predict(X[-1:], verbose=0)
+            current_price = current_data['close'].iloc[-1]
+            predicted_price = self.scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
+
+            price_change = (predicted_price - current_price) / current_price * 100
+            volatility = current_data['close'].rolling(window=20).std().iloc[-1]
+            volume_trend = current_data['volume'].pct_change().rolling(window=5).mean().iloc[-1]
+
+            confidence = self._calculate_confidence(
+                price_change=price_change,
+                volatility=volatility,
+                volume_trend=volume_trend,
+                current_price=current_price
+            )
+
+            return {
+                'prediction': predicted_price,
+                'confidence': confidence,
+                'price_change': price_change,
+                'signal': 'long' if price_change > 0 else 'short',
+                'volatility': volatility,
+                'volume_trend': volume_trend,
+                'timestamp': pd.Timestamp.now().timestamp()
+            }
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Vorhersage: {e}")
+            return self._predict_with_technical_analysis(current_data)
+
+    def _predict_with_technical_analysis(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Fallback-Vorhersage basierend auf technischer Analyse"""
+        try:
+            rsi = ta.momentum.rsi(data['close'], window=14).iloc[-1]
+            macd = ta.trend.macd(data['close']).iloc[-1, 0]
+
+            price = data['close'].iloc[-1]
+            price_change = data['close'].pct_change().iloc[-1] * 100
+            volume_change = data['volume'].pct_change().iloc[-1] * 100
+
+            signal = 'neutral'
+            confidence = 0.5
+
+            if rsi < 30:  # Überverkauft
+                signal = 'long'
+                confidence = min(0.7, confidence + 0.2)
+            elif rsi > 70:  # Überkauft
+                signal = 'short'
+                confidence = min(0.7, confidence + 0.2)
+
+            if macd > 0 and volume_change > 0:
+                confidence = min(0.8, confidence + 0.1)
+            elif macd < 0 and volume_change < 0:
+                confidence = min(0.8, confidence + 0.1)
+
+            return {
+                'prediction': None,
+                'confidence': confidence,
+                'signal': signal,
+                'price_change': price_change,
+                'volatility': data['close'].std(),
+                'volume_trend': volume_change,
+                'timestamp': pd.Timestamp.now().timestamp()
+            }
+
+        except Exception as e:
+            logger.error(f"Fehler bei der technischen Analyse: {e}")
+            return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
+
+    def _calculate_confidence(self, price_change: float, volatility: float, 
+                            volume_trend: float, current_price: float) -> float:
+        """Berechnet die Konfidenz der Vorhersage"""
+        try:
+            price_confidence = min(abs(price_change) / 2, 1.0)
+            volume_confidence = min(abs(volume_trend) * 5, 1.0)
+            volatility_confidence = max(1 - (volatility / current_price) * 100, 0.0)
+
+            confidence = (
+                price_confidence * 0.5 +
+                volume_confidence * 0.3 +
+                volatility_confidence * 0.2
+            )
+
+            return min(confidence, 1.0)
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Konfidenzberechnung: {e}")
+            return 0.0
+
+    def train_model(self, training_data: pd.DataFrame):
+        """Trainiert das LSTM-Modell"""
+        if not TF_AVAILABLE or self.model is None:
+            return
+
+        try:
+            X = self.prepare_features(training_data)
+            if len(X) == 0:
+                return
+
+            y = training_data['close'].iloc[60:].values
+            y_scaled = self.scaler.fit_transform(y.reshape(-1, 1))
+
+            callbacks = [
+                EarlyStopping(
+                    monitor='val_loss',
+                    patience=5,
+                    restore_best_weights=True,
+                    mode='min'
+                ),
+                ReduceLROnPlateau(
+                    monitor='val_loss',
+                    factor=0.5,
+                    patience=3,
+                    min_lr=0.0001
+                )
+            ]
+
+            self.model.fit(
+                X, y_scaled,
+                epochs=100,
+                batch_size=32,
+                validation_split=0.2,
+                callbacks=callbacks,
+                shuffle=True
+            )
+
+            logger.info("Modell erfolgreich trainiert")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Training: {e}")
+            raise
 
     async def fetch_market_data(self) -> Dict[str, Any]:
         """Holt erweiterte Marktdaten von verschiedenen Quellen"""
@@ -100,194 +317,6 @@ class AITradingEngine:
         except Exception as e:
             logger.error(f"Fehler beim Abrufen der Marktdaten: {e}")
             return {}
-
-    def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
-        """Sagt die nächste Kursbewegung vorher"""
-        try:
-            if not TF_AVAILABLE:
-                # Fallback zur technischen Analyse wenn TensorFlow nicht verfügbar
-                return self._predict_with_technical_analysis(current_data)
-
-            # KI-basierte Vorhersage
-            X = self.prepare_features(current_data)
-            if len(X) == 0:
-                return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
-
-            prediction = self.model.predict(X[-1:], verbose=0)
-            current_price = current_data['close'].iloc[-1]
-            predicted_price = self.scaler.inverse_transform(prediction)[0][0]
-
-            # Berechne zusätzliche Metriken
-            price_change = (predicted_price - current_price) / current_price * 100
-            volatility = current_data['close'].rolling(window=20).std().iloc[-1]
-            volume_trend = current_data['volume'].pct_change().rolling(window=5).mean().iloc[-1]
-
-            # Berechne Konfidenz
-            confidence = self._calculate_confidence(
-                price_change=price_change,
-                volatility=volatility,
-                volume_trend=volume_trend,
-                current_price=current_price
-            )
-
-            return {
-                'prediction': predicted_price,
-                'confidence': confidence,
-                'price_change': price_change,
-                'signal': 'long' if price_change > 0 else 'short',
-                'volatility': volatility,
-                'volume_trend': volume_trend,
-                'timestamp': datetime.now().timestamp()
-            }
-
-        except Exception as e:
-            logger.error(f"Fehler bei der Vorhersage: {e}")
-            return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
-
-    def _predict_with_technical_analysis(self, data: pd.DataFrame) -> Dict[str, Any]:
-        """Fallback-Vorhersage basierend auf technischer Analyse"""
-        try:
-            # Berechne technische Indikatoren
-            rsi = ta.rsi(data['close'], length=14).iloc[-1]
-            macd = ta.macd(data['close'])['MACD_12_26_9'].iloc[-1]
-            bb = ta.bbands(data['close'])
-
-            # Analysiere Marktsituation
-            price = data['close'].iloc[-1]
-            price_change = data['close'].pct_change().iloc[-1] * 100
-            volume_change = data['volume'].pct_change().iloc[-1] * 100
-
-            # Generiere Signal basierend auf technischer Analyse
-            signal = 'neutral'
-            confidence = 0.5  # Basis-Konfidenz
-
-            if rsi < 30:  # Überverkauft
-                signal = 'long'
-                confidence = min(0.7, confidence + 0.2)
-            elif rsi > 70:  # Überkauft
-                signal = 'short'
-                confidence = min(0.7, confidence + 0.2)
-
-            if macd > 0 and volume_change > 0:  # Positiver MACD mit Volumen
-                confidence = min(0.8, confidence + 0.1)
-            elif macd < 0 and volume_change < 0:  # Negativer MACD mit Volumen
-                confidence = min(0.8, confidence + 0.1)
-
-            return {
-                'prediction': None,  # Keine konkrete Preisvorhersage
-                'confidence': confidence,
-                'signal': signal,
-                'price_change': price_change,
-                'volatility': data['close'].std(),
-                'volume_trend': volume_change,
-                'timestamp': datetime.now().timestamp()
-            }
-
-        except Exception as e:
-            logger.error(f"Fehler bei der technischen Analyse: {e}")
-            return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
-
-    def _calculate_confidence(self, price_change: float, volatility: float, 
-                            volume_trend: float, current_price: float) -> float:
-        """Berechnet die Konfidenz der Vorhersage"""
-        try:
-            # Normalisiere die Metriken
-            price_confidence = min(abs(price_change) / 2, 1.0)
-            volume_confidence = min(abs(volume_trend) * 5, 1.0)
-            volatility_confidence = max(1 - (volatility / current_price) * 100, 0.0)
-
-            # Gewichtete Konfidenz
-            confidence = (
-                price_confidence * 0.5 +
-                volume_confidence * 0.3 +
-                volatility_confidence * 0.2
-            )
-
-            return min(confidence, 1.0)
-
-        except Exception as e:
-            logger.error(f"Fehler bei der Konfidenzberechnung: {e}")
-            return 0.0
-
-    def prepare_features(self, price_data: pd.DataFrame) -> np.ndarray:
-        """Bereitet Features für das ML-Modell vor"""
-        if not TF_AVAILABLE:
-            return np.array([])
-
-        try:
-            df = price_data.copy()
-
-            # Technische Indikatoren
-            df['rsi'] = ta.rsi(df['close'], length=14)
-            df['macd'] = ta.macd(df['close'])['MACD_12_26_9']
-            df['bb_upper'], df['bb_middle'], df['bb_lower'] = ta.bbands(df['close']).values
-            df['volume_sma'] = ta.sma(df['volume'], length=20)
-
-            # Erweiterte Indikatoren
-            df['stoch_k'], df['stoch_d'] = ta.stoch(df['close'], df['high'], df['low'])
-            df['mfi'] = ta.mfi(df['high'], df['low'], df['close'], df['volume'])
-            df['adx'] = ta.adx(df['high'], df['low'], df['close'])['ADX_14']
-
-            # Preisbewegungen
-            df['price_change'] = df['close'].pct_change()
-            df['volatility'] = df['close'].rolling(window=20).std()
-            df['volume_change'] = df['volume'].pct_change()
-            df['trend_strength'] = abs(df['price_change'].rolling(window=10).mean())
-
-            # Feature-Normalisierung
-            feature_columns = [
-                'close', 'volume', 'rsi', 'macd', 'bb_upper', 'bb_lower',
-                'stoch_k', 'stoch_d', 'mfi', 'adx', 'price_change', 'volatility',
-                'volume_change', 'trend_strength'
-            ]
-
-            df_scaled = pd.DataFrame(
-                self.scaler.fit_transform(df[feature_columns]),
-                columns=feature_columns
-            )
-
-            # Erstelle Sequenzen
-            sequences = []
-            for i in range(len(df_scaled) - 60):
-                sequences.append(df_scaled.iloc[i:i+60].values)
-
-            return np.array(sequences)
-
-        except Exception as e:
-            logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")
-            return np.array([])
-
-    def _build_model(self):
-        """Erstellt das LSTM-Modell"""
-        if not TF_AVAILABLE:
-            return
-
-        try:
-            model = Sequential([
-                LSTM(256, return_sequences=True, input_shape=(60, 14)),
-                Dropout(0.3),
-                LSTM(128, return_sequences=True),
-                Dropout(0.3),
-                LSTM(64, return_sequences=False),
-                Dropout(0.3),
-                Dense(64, activation='relu'),
-                Dropout(0.2),
-                Dense(32, activation='relu'),
-                Dense(1, activation='linear')
-            ])
-
-            model.compile(
-                optimizer=Adam(learning_rate=0.001),
-                loss='huber',
-                metrics=['mae', 'mse']
-            )
-
-            self.model = model
-            logger.info("LSTM Modell erfolgreich erstellt")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Erstellen des Models: {e}")
-            self.model = None
 
     def backtest_strategy(self, historical_data: pd.DataFrame) -> Dict[str, float]:
         """Führt erweitertes Backtesting der Strategie durch"""
@@ -348,47 +377,7 @@ class AITradingEngine:
             logger.error(f"Fehler beim Backtesting: {e}")
             return {}
 
-    def train_model(self, training_data: pd.DataFrame):
-        """Trainiert das LSTM-Modell mit erweiterten Features"""
-        if not TF_AVAILABLE:
-            return
 
-        try:
-            X = self.prepare_features(training_data)
-            y = training_data['close'].iloc[60:].values
-            y_scaled = self.scaler.fit_transform(y.reshape(-1, 1))
-
-            # Erweiterte Callbacks für besseres Training
-            callbacks = [
-                EarlyStopping(
-                    monitor='val_loss',
-                    patience=5,
-                    restore_best_weights=True,
-                    mode='min'
-                ),
-                ReduceLROnPlateau(
-                    monitor='val_loss',
-                    factor=0.5,
-                    patience=3,
-                    min_lr=0.0001
-                )
-            ]
-
-            # Trainiere Modell mit erweiterter Konfiguration
-            self.model.fit(
-                X, y_scaled,
-                epochs=100,
-                batch_size=32,
-                validation_split=0.2,
-                callbacks=callbacks,
-                shuffle=True
-            )
-
-            logger.info("Modell erfolgreich mit erweiterten Features trainiert")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Training: {e}")
-            raise
-
+# Notwendige zusätzliche Imports
 import requests
 from datetime import datetime, timedelta

@@ -1752,6 +1752,7 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "solana" },
     { name = "solana-sdk" },
+    { name = "ta" },
     { name = "telegram" },
     { name = "tensorflow" },
     { name = "twilio" },
@@ -1780,8 +1781,9 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "solana", specifier = ">=0.25.1" },
     { name = "solana-sdk", specifier = ">=0.25.6" },
+    { name = "ta", specifier = ">=0.11.0" },
     { name = "telegram", specifier = ">=0.0.1" },
-    { name = "tensorflow", specifier = ">=2.14.0" },
+    { name = "tensorflow", specifier = "==2.14.0" },
     { name = "twilio", specifier = ">=9.4.6" },
 ]
 
@@ -2100,6 +2102,16 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/eb/80322b7c766beee23d0e42a86497ba6ea033570af969ce0985c004a9461c/solders-0.2.0-cp37-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:f696c6fcdbe37c4357865aaa5ab843881ead5ea1255cb58ea8bde3a6bd2af0fb", size = 1698248 },
     { url = "https://files.pythonhosted.org/packages/03/9f/e1c4ae7a0ddef83e557af8481659600de6e96760f6193212b280e235d5be/solders-0.2.0-cp37-abi3-win_amd64.whl", hash = "sha256:4d699d6f2f1854d85c7f1c4dc1b8cba7fd2c4a1fda6c6783b611ac88c99e0f97", size = 527306 },
 ]
+
+[[package]]
+name = "ta"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/9a/37d92a6b470dc9088612c2399a68f1a9ac22872d4e1eff416818e22ab11b/ta-0.11.0.tar.gz", hash = "sha256:de86af43418420bd6b088a2ea9b95483071bf453c522a8441bc2f12bcf8493fd", size = 25308 }
 
 [[package]]
 name = "telegram"
