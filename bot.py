@@ -1,14 +1,6 @@
 import logging
-from telegram import Bot
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes
-)
-from telegram._update import Update
-from telegram._inline.inlinekeyboardbutton import InlineKeyboardButton
-from telegram._inline.inlinekeyboardmarkup import InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from config import Config
 from wallet_manager import WalletManager
@@ -116,9 +108,16 @@ class TradingBot:
                 ])
             )
 
-    async def execute_trade(self, update: Update, context: ContextTypes.DEFAULT_TYPE, amount: float, signal_id: int):
-        """Führt einen Trade aus"""
+    async def amount_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handler für Trade-Beträge"""
+        query = update.callback_query
+        await query.answer()
+
         try:
+            amount, signal_id = query.data.split("_")[1:]
+            amount = float(amount)
+            signal_id = int(signal_id)
+
             signal = self.signal_processor.get_active_signals()[signal_id]
             success, tx_id = self.dex_connector.execute_trade(
                 self.wallet_manager,
@@ -129,17 +128,17 @@ class TradingBot:
 
             if success:
                 self.signal_processor.mark_signal_executed(signal_id)
-                await update.callback_query.message.reply_text(
+                await query.message.reply_text(
                     f"✅ Trade erfolgreich ausgeführt!\n\nBetrag: {amount} SOL\nTransaktion: {tx_id}"
                 )
             else:
-                await update.callback_query.message.reply_text(
+                await query.message.reply_text(
                     f"❌ Trade fehlgeschlagen: {tx_id}"
                 )
 
         except Exception as e:
             logger.error(f"Fehler bei Trade-Ausführung: {e}")
-            await update.callback_query.message.reply_text(
+            await query.message.reply_text(
                 "❌ Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut."
             )
 
@@ -156,8 +155,9 @@ class TradingBot:
             self.application.add_handler(CommandHandler("wallet", self.wallet_command))
             self.application.add_handler(CommandHandler("trade", self.trade_command))
 
-            # Callback query handler
-            self.application.add_handler(CallbackQueryHandler(self.button_handler))
+            # Callback query handlers
+            self.application.add_handler(CallbackQueryHandler(self.button_handler, pattern="^(connect_wallet|execute_trade_\d+)$"))
+            self.application.add_handler(CallbackQueryHandler(self.amount_handler, pattern="^amount_\d+\.?\d*_\d+$"))
 
             # Start the Bot
             logger.info("Bot is ready to handle messages")
