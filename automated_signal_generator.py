@@ -3,9 +3,11 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
+import requests
 from dex_connector import DexConnector
 from chart_analyzer import ChartAnalyzer
 from signal_processor import SignalProcessor
+from ai_trading_engine import AITradingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,49 @@ class AutomatedSignalGenerator:
         self.total_signals_generated = 0
         self.last_signal_time = None
         self.signal_intervals = []  # Speichert die Zeitintervalle zwischen Signalen
+
+        # API Endpoints
+        self.coingecko_api = "https://api.coingecko.com/api/v3"
+        self.coinmarketcap_api = "https://pro-api.coinmarketcap.com/v1"
+        self.solana_rpc = "https://api.mainnet-beta.solana.com"
+
+        # Initialize AI Engine
+        self.ai_engine = AITradingEngine()
+        logger.info("KI-Trading-Engine initialisiert")
+
+    async def fetch_market_data(self) -> Dict[str, Any]:
+        """Holt Marktdaten von verschiedenen Quellen"""
+        try:
+            data = {}
+
+            # CoinGecko Daten
+            coingecko_url = f"{self.coingecko_api}/simple/price"
+            params = {
+                'ids': 'solana',
+                'vs_currencies': 'usd',
+                'include_24hr_vol': True,
+                'include_24hr_change': True
+            }
+            response = requests.get(coingecko_url, params=params)
+            if response.status_code == 200:
+                data['coingecko'] = response.json()
+
+            # Solana RPC Daten (Beispiel für Blockzeit)
+            rpc_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getRecentBlockhash"
+            }
+            response = requests.post(self.solana_rpc, json=rpc_payload)
+            if response.status_code == 200:
+                data['solana_rpc'] = response.json()
+
+            logger.info("Marktdaten erfolgreich abgerufen")
+            return data
+
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen der Marktdaten: {e}")
+            return {}
 
     def start(self):
         """Startet den automatischen Signal-Generator"""
@@ -45,7 +90,7 @@ class AutomatedSignalGenerator:
             logger.info("Signal-Generator gestoppt")
 
     def generate_signals(self):
-        """Generiert Trading-Signale basierend auf Marktanalyse"""
+        """Generiert Trading-Signale basierend auf KI-Analyse und Marktdaten"""
         try:
             current_time = datetime.now(pytz.UTC)
             self.last_check_time = current_time
@@ -57,13 +102,16 @@ class AutomatedSignalGenerator:
 
             logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
 
-            # Hole aktuelle Marktdaten
-            market_info = self.dex_connector.get_market_info("SOL")
-            if not market_info or market_info.get('price', 0) == 0:
-                logger.error("Keine Marktdaten verfügbar oder ungültiger Preis")
+            # Hole Marktdaten von verschiedenen Quellen
+            market_data = self.fetch_market_data()
+
+            # DEX Daten
+            dex_market_info = self.dex_connector.get_market_info("SOL")
+            if not dex_market_info or dex_market_info.get('price', 0) == 0:
+                logger.error("Keine DEX-Marktdaten verfügbar oder ungültiger Preis")
                 return
 
-            current_price = float(market_info.get('price', 0))
+            current_price = float(dex_market_info.get('price', 0))
             logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
 
             # Aktualisiere Chart-Daten
@@ -71,15 +119,20 @@ class AutomatedSignalGenerator:
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
+            # KI-Vorhersage
+            ai_prediction = self.ai_engine.predict_next_move(self.chart_analyzer.data)
+
             # Detaillierte Marktanalyse Logs
             logger.info(f"Marktanalyse - Trend: {trend_analysis.get('trend')}, "
                        f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
             logger.info(f"Support/Resistance - Support: {support_resistance.get('support', 0):.2f}, "
                        f"Resistance: {support_resistance.get('resistance', 0):.2f}")
+            logger.info(f"KI-Vorhersage - Preis: {ai_prediction.get('prediction', 0):.2f}, "
+                       f"Konfidenz: {ai_prediction.get('confidence', 0):.2f}")
 
             # Erstelle Signal basierend auf Analyse
             signal = self._create_signal_from_analysis(
-                current_price, trend_analysis, support_resistance
+                current_price, trend_analysis, support_resistance, ai_prediction, market_data
             )
 
             if signal:
@@ -103,7 +156,6 @@ class AutomatedSignalGenerator:
                             interval = (current_time - self.last_signal_time).total_seconds() / 60
                             self.signal_intervals.append(interval)
                             avg_interval = sum(self.signal_intervals) / len(self.signal_intervals)
-                            logger.info(f"🚨 Trading-Signal gesendet: {processed_signal['pair']}")
                             logger.info(f"📊 Signal-Statistiken:"
                                       f"\n - Durchschnittliches Intervall: {avg_interval:.1f} Minuten"
                                       f"\n - Gesamtzahl Signale: {self.total_signals_generated}")
@@ -120,11 +172,14 @@ class AutomatedSignalGenerator:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
 
     def _create_signal_from_analysis(
-        self, current_price: float, 
+        self, 
+        current_price: float, 
         trend_analysis: Dict[str, Any],
-        support_resistance: Dict[str, float]
+        support_resistance: Dict[str, float],
+        ai_prediction: Dict[str, Any],
+        market_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Erstellt ein Trading-Signal basierend auf technischer Analyse"""
+        """Erstellt ein Trading-Signal basierend auf KI und technischer Analyse"""
         try:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
@@ -133,17 +188,21 @@ class AutomatedSignalGenerator:
                 logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength}%")
                 return None
 
-            # Bestimme Entry, Stop Loss und Take Profit
+            # Support/Resistance Levels
             support = support_resistance.get('support', 0)
             resistance = support_resistance.get('resistance', 0)
 
-            # Dynamische Take-Profit-Berechnung basierend auf Trendstärke
+            # KI-basierte Take-Profit-Berechnung
+            ai_confidence = ai_prediction.get('confidence', 0)
+            price_change = ai_prediction.get('price_change', 0)
+
+            # Dynamische Take-Profit-Berechnung basierend auf KI und Trend
             base_tp_percent = 0.015  # 1.5% Basis Take-Profit
-            # Erhöhe Take-Profit bei stärkerem Trend
-            tp_multiplier = min(3.0, 1.0 + (strength / 100) * 10)  # Max 3x Basis-TP
+            # Erhöhe Take-Profit bei starker KI-Konfidenz und Trend
+            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5) + (ai_confidence * 2))
             dynamic_tp_percent = base_tp_percent * tp_multiplier
 
-            if trend == 'aufwärts':
+            if trend == 'aufwärts' or (trend == 'neutral' and price_change > 0):
                 entry = current_price
                 stop_loss = max(support, current_price * 0.995)  # 0.5% Stop Loss
                 # Berechne dynamisches Take-Profit, maximal bis zum Resistance-Level
@@ -163,7 +222,10 @@ class AutomatedSignalGenerator:
                 logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
                 return None
 
-            signal_quality = self._calculate_signal_quality(trend_analysis, strength, expected_profit)
+            signal_quality = self._calculate_signal_quality(
+                trend_analysis, strength, expected_profit, ai_confidence
+            )
+
             if signal_quality < 3:  # Reduziert auf 3 für mehr Signale
                 logger.info(f"Kein Signal - Qualität zu niedrig: {signal_quality}/10")
                 return None
@@ -172,6 +234,7 @@ class AutomatedSignalGenerator:
                        f"\n - Trend: {trend}"
                        f"\n - Trendstärke: {strength:.2f}%"
                        f"\n - Take-Profit-Multiplikator: {tp_multiplier:.1f}x"
+                       f"\n - KI-Konfidenz: {ai_confidence:.2f}"
                        f"\n - Erwarteter Profit: {expected_profit:.1f}%"
                        f"\n - Signalqualität: {signal_quality}/10")
 
@@ -186,15 +249,20 @@ class AutomatedSignalGenerator:
                 'token_address': "SOL",
                 'expected_profit': expected_profit,
                 'signal_quality': signal_quality,
-                'trend_strength': strength
+                'trend_strength': strength,
+                'ai_confidence': ai_confidence,
+                'price_prediction': ai_prediction.get('prediction', 0)
             }
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Erstellung: {e}")
             return None
 
-    def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], strength: float, expected_profit: float) -> float:
-        """Berechnet die Qualität eines Signals (0-10) - Optimierte Version"""
+    def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], 
+                               strength: float, 
+                               expected_profit: float,
+                               ai_confidence: float) -> float:
+        """Berechnet die Qualität eines Signals (0-10) - Optimierte Version mit KI"""
         try:
             # Grundlegende Trend-Bewertung
             trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
@@ -210,29 +278,34 @@ class AutomatedSignalGenerator:
             else:
                 profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
 
+            # KI-Konfidenz Score
+            ai_score = ai_confidence * 10
+
             # Dynamische Gewichtung basierend auf Marktsituation
             if strength > 0.2:  # Starker Trend
-                weights = (0.2, 0.5, 0.3)  # Mehr Gewicht auf Trendstärke
+                weights = (0.2, 0.3, 0.2, 0.3)  # Mehr Gewicht auf Trendstärke und KI
             elif expected_profit > 1.5:  # Hoher potenzieller Profit
-                weights = (0.3, 0.3, 0.4)  # Mehr Gewicht auf Profit
+                weights = (0.2, 0.2, 0.3, 0.3)  # Mehr Gewicht auf Profit und KI
             else:
-                weights = (0.3, 0.4, 0.3)  # Ausgewogene Gewichtung
+                weights = (0.25, 0.25, 0.25, 0.25)  # Ausgewogene Gewichtung
 
             # Gewichtete Summe
             quality = (
-                trend_base * weights[0] +  # Trend-Basis
-                strength_score * weights[1] +  # Trendstärke
-                profit_score * weights[2]  # Profit-Potenzial
+                trend_base * weights[0] +      # Trend-Basis
+                strength_score * weights[1] +   # Trendstärke
+                profit_score * weights[2] +     # Profit-Potenzial
+                ai_score * weights[3]          # KI-Konfidenz
             )
 
             # Bonus für besonders starke Signale
-            if strength > 0.3 and expected_profit > 2.0:
-                quality *= 1.1  # 10% Bonus
+            if strength > 0.3 and expected_profit > 2.0 and ai_confidence > 0.8:
+                quality *= 1.2  # 20% Bonus bei perfekten Bedingungen
 
             logger.debug(f"Signal Qualitätsberechnung:"
                         f"\n - Trend Score: {trend_base} (Gewicht: {weights[0]:.1f})"
                         f"\n - Strength Score: {strength_score} (Gewicht: {weights[1]:.1f})"
                         f"\n - Profit Score: {profit_score} (Gewicht: {weights[2]:.1f})"
+                        f"\n - AI Score: {ai_score} (Gewicht: {weights[3]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
             return round(min(quality, 10), 1)
