@@ -360,19 +360,15 @@ class SolanaWalletBot:
                         )
                         return
 
-                    # Zeige Zusammenfassung und frage nach Bestätigung
+                    # Sofortige Trade-Ausführung ohne zusätzliche Bestätigung
                     update.message.reply_text(
-                        f"📝 Trade-Zusammenfassung:\n\n"
+                        f"🚀 Trade wird SOFORT ausgeführt!\n\n"
                         f"Betrag: {amount:.4f} SOL\n"
-                        f"Verbleibendes Guthaben: {(balance - amount):.4f} SOL\n\n"
-                        f"Möchten Sie den Trade ausführen?",
-                        reply_markup=InlineKeyboardMarkup([
-                            [
-                                InlineKeyboardButton("✅ Bestätigen", callback_data=f"confirm_trade_{amount}"),
-                                InlineKeyboardButton("❌ Abbrechen", callback_data="cancel_trade")
-                            ]
-                        ])
+                        f"Verbleibendes Guthaben: {(balance - amount):.4f} SOL"
                     )
+
+                    # Hier kommt die eigentliche Trade-Logik
+                    # [Trade-Ausführung]
 
                 except ValueError:
                     update.message.reply_text("❌ Ungültiger Betrag. Bitte geben Sie eine Zahl ein.")

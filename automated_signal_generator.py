@@ -27,12 +27,12 @@ class AutomatedSignalGenerator:
             self.scheduler.add_job(
                 self.generate_signals,
                 'interval',
-                minutes=5,
+                minutes=1,  # Auf 1 Minute reduziert für schnellere Reaktion
                 id='signal_generator'
             )
             self.scheduler.start()
             self.is_running = True
-            logger.info("Signal-Generator läuft jetzt im Hintergrund")
+            logger.info("Signal-Generator läuft jetzt im Hintergrund - Überprüfung alle 60 Sekunden")
 
     def stop(self):
         """Stoppt den Signal-Generator"""
@@ -48,9 +48,9 @@ class AutomatedSignalGenerator:
             current_time = datetime.now(pytz.UTC)
             self.last_check_time = current_time
 
-            logger.info(f"[{current_time}] Analysiere Markt für neue Trading-Signale...")
+            logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
 
-            # Hole aktuelle Marktdaten
+            # Hole aktuelle Marktdaten mit hoher Priorität
             market_info = self.dex_connector.get_market_info("SOL")
             if not market_info:
                 logger.error("Keine Marktdaten verfügbar")
@@ -61,7 +61,7 @@ class AutomatedSignalGenerator:
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
-            logger.info(f"Aktuelle Marktanalyse - Trend: {trend_analysis.get('trend')}, "
+            logger.info(f"Marktanalyse - Trend: {trend_analysis.get('trend')}, "
                        f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
 
             # Erstelle Signal basierend auf Analyse
@@ -71,15 +71,15 @@ class AutomatedSignalGenerator:
             )
 
             if signal:
-                # Verarbeite und sende Signal
+                # Verarbeite und sende Signal mit hoher Priorität
                 processed_signal = self.signal_processor.process_signal(signal)
                 if processed_signal:
                     self._notify_users_about_signal(processed_signal)
                     self.total_signals_generated += 1
-                    logger.info(f"Neues Trading-Signal generiert: {processed_signal['pair']}, "
+                    logger.info(f"🚨 Trading-Signal generiert: {processed_signal['pair']}, "
                               f"Qualität: {processed_signal['signal_quality']}/10")
 
-            logger.info(f"Marktanalyse abgeschlossen. Signals generiert: {self.total_signals_generated}")
+            logger.info(f"Schnellanalyse abgeschlossen. Signals: {self.total_signals_generated}")
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
@@ -158,7 +158,7 @@ class AutomatedSignalGenerator:
             balance = self.bot.wallet_manager.get_balance()
 
             signal_message = (
-                f"🚨 Neues Trading Signal!\n\n"
+                f"⚡ SCHNELLES TRADING SIGNAL!\n\n"
                 f"Pair: {signal['pair']}\n"
                 f"Signal: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
                 f"Einstieg: {signal['entry']:.2f} USD\n"
@@ -167,7 +167,7 @@ class AutomatedSignalGenerator:
                 f"Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
                 f"Signal-Qualität: {signal['signal_quality']}/10\n\n"
                 f"💰 Verfügbares Guthaben: {balance:.4f} SOL\n\n"
-                f"Möchten Sie dieses Signal handeln?"
+                f"Schnell reagieren! Der Markt wartet nicht! 🚀"
             )
 
             # Erstelle Inline-Buttons für die Benutzerinteraktion
