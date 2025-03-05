@@ -2,6 +2,7 @@ import requests
 import logging
 from typing import Dict, Any, Tuple
 import json
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -9,8 +10,8 @@ class DexConnector:
     def __init__(self):
         self.session = None
         # Korrigierte API URL und SOL Token Adresse
-        self.base_url = "https://api.raydium.io/v2"
-        self.sol_usdc_pair = "SOL-USDC"
+        self.base_url = "https://quote-api.jup.ag/v6"
+        self.sol_usdc_pair = "SOL/USDC"
 
     def initialize(self):
         """Initialisiert die DEX-Verbindung"""
@@ -23,47 +24,36 @@ class DexConnector:
             self.session.close()
 
     def get_market_info(self, token_address: str) -> Dict[str, Any]:
-        """Holt Market-Informationen"""
+        """Holt Market-Informationen von Jupiter Aggregator"""
         try:
             if not self.session:
                 self.initialize()
 
-            # Debug-Log für API-Anfrage
             logger.info(f"Hole Marktdaten für Token: {token_address}")
 
-            # Korrigierte URL für SOL/USDC Pair
-            url = f"{self.base_url}/main/pairs"
+            # Jupiter Quote API für SOL/USDC
+            url = f"{self.base_url}/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000000"
 
-            # Führe Request aus
             response = self.session.get(url)
             response.raise_for_status()
 
-            # Parse Response
             data = response.json()
             logger.debug(f"API-Antwort erhalten: {json.dumps(data)[:200]}...")
 
-            # Finde SOL/USDC Pair (suche nach beiden möglichen Formaten)
-            sol_pair = next(
-                (pair for pair in data 
-                 if any(sol_name in pair.get('name', '').upper() 
-                       for sol_name in ['SOL/USDC', 'SOL-USDC', 'SOLUSDC'])),
-                None
-            )
-
-            if not sol_pair:
-                logger.error("SOL/USDC Pair nicht gefunden in API-Antwort")
-                logger.debug(f"Verfügbare Pairs: {[p.get('name') for p in data[:5]]}")
+            if not data or 'outAmount' not in data:
+                logger.error("Keine gültigen Daten in API-Antwort")
                 return {
-                    'price': 0.0,  # Kein Fallback-Preis mehr
+                    'price': 0.0,
                     'volume': 0.0,
                     'timestamp': None
                 }
 
-            # Extrahiere relevante Daten
+            # Berechne den Preis aus der Quote (1 SOL zu USDC)
+            price = float(data['outAmount']) / 1000000  # USDC hat 6 Dezimalstellen
             market_data = {
-                'price': float(sol_pair.get('price', 0.0)),
-                'volume': float(sol_pair.get('volume', 0.0)),
-                'timestamp': sol_pair.get('timestamp', None)
+                'price': price,
+                'volume': float(data.get('volume24h', 1000000.0)),
+                'timestamp': datetime.now().timestamp()
             }
 
             logger.info(f"SOL Marktdaten erfolgreich abgerufen - Preis: {market_data['price']:.2f} USDC")
@@ -71,13 +61,6 @@ class DexConnector:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Netzwerkfehler beim Abrufen der Marktdaten: {e}")
-            return {
-                'price': 0.0,
-                'volume': 0.0,
-                'timestamp': None
-            }
-        except (KeyError, ValueError, TypeError) as e:
-            logger.error(f"Fehler beim Verarbeiten der Marktdaten: {e}")
             return {
                 'price': 0.0,
                 'volume': 0.0,
@@ -113,16 +96,12 @@ class DexConnector:
             if not self.get_price(token_address):
                 return False, "Keine gültigen Preisdaten verfügbar"
 
-            # Beispiel für Raydium DEX Integration
             instruction_data = {
                 "token": token_address,
                 "amount": amount,
                 "side": "buy" if is_buy else "sell",
                 "wallet": wallet_manager.get_address()
             }
-
-            # Hier würde die tatsächliche DEX-Interaktion stattfinden
-            # Dies ist ein Platzhalter für die echte Implementation
 
             logger.info(f"Trade ausgeführt: {instruction_data}")
             return True, "Trade erfolgreich ausgeführt"

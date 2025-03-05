@@ -77,7 +77,7 @@ class AutomatedSignalGenerator:
                 processed_signal = self.signal_processor.process_signal(signal)
                 if processed_signal:
                     logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
-                    if processed_signal['signal_quality'] >= 7:
+                    if processed_signal['signal_quality'] >= 7:  # Schwellenwert auf 7 gesetzt für echte Signale
                         self._notify_users_about_signal(processed_signal)
                         self.total_signals_generated += 1
                         logger.info(f"🚨 Trading-Signal gesendet: {processed_signal['pair']}")
@@ -104,27 +104,44 @@ class AutomatedSignalGenerator:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
 
-            if trend == 'neutral' or strength < 0.5:
+            if trend == 'neutral' or strength < 1.0:  # Erhöht von 0.5% auf 1%
+                logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength}%")
                 return None
 
             # Bestimme Entry, Stop Loss und Take Profit
             support = support_resistance.get('support', 0)
             resistance = support_resistance.get('resistance', 0)
 
+            if support == 0 or resistance == 0:
+                logger.info("Kein Signal - Support/Resistance nicht verfügbar")
+                return None
+
             if trend == 'aufwärts':
                 entry = current_price
-                stop_loss = max(support, current_price * 0.95)  # 5% Stop Loss
-                take_profit = min(resistance, current_price * 1.15)  # 15% Take Profit
+                stop_loss = max(support, current_price * 0.97)  # Engerer Stop Loss (3%)
+                take_profit = min(resistance, current_price * 1.25)  # Höheres Take Profit (25%)
                 direction = 'long'
-            else:
+            else:  # abwärts
                 entry = current_price
-                stop_loss = min(resistance, current_price * 1.05)  # 5% Stop Loss
-                take_profit = max(support, current_price * 0.85)  # 15% Take Profit
+                stop_loss = min(resistance, current_price * 1.03)  # Engerer Stop Loss (3%)
+                take_profit = max(support, current_price * 0.80)  # Höheres Take Profit (20%)
                 direction = 'short'
 
             # Berechne erwarteten Profit und Signal-Qualität
             expected_profit = abs((take_profit - entry) / entry * 100)
+
+            # Zusätzliche Validierungen für echte Signale
+            if expected_profit < 5:  # Mindestens 5% erwarteter Profit
+                logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
+                return None
+
             signal_quality = self._calculate_signal_quality(trend_analysis, strength, expected_profit)
+            if signal_quality < 7:
+                logger.info(f"Kein Signal - Qualität zu niedrig: {signal_quality}/10")
+                return None
+
+            logger.info(f"Neues Signal erstellt - Qualität: {signal_quality}/10, "
+                       f"Erwarteter Profit: {expected_profit:.1f}%")
 
             return {
                 'pair': 'SOL/USD',
@@ -144,21 +161,31 @@ class AutomatedSignalGenerator:
             return None
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], strength: float, expected_profit: float) -> float:
-        """Berechnet die Qualität eines Signals (0-10)"""
+        """Berechnet die Qualität eines Signals (0-10) - Verschärfte Kriterien"""
         try:
-            # Gewichte verschiedene Faktoren
-            trend_score = 8 if trend_analysis['trend'] == 'aufwärts' else 6
-            strength_score = min(strength * 10, 10)
-            profit_score = min(expected_profit / 3, 10)  # 30% Profit = max Score
+            # Gewichte verschiedene Faktoren - Angepasst für echte Signale
+            trend_score = 9 if trend_analysis['trend'] == 'aufwärts' else 5  # Stärkere Gewichtung für Aufwärtstrends
+            strength_score = min(strength * 12, 10)  # Erhöhte Sensitivität für Marktstärke
+            profit_score = min(expected_profit / 2.5, 10)  # Höhere Anforderung an Profit (25% = max Score)
 
-            # Gewichtete Summe
-            quality = (trend_score * 0.4 + strength_score * 0.3 + profit_score * 0.3)
+            # Gewichtete Summe mit angepassten Gewichtungen
+            quality = (
+                trend_score * 0.35 +  # Trend wichtiger
+                strength_score * 0.4 +  # Marktstärke am wichtigsten
+                profit_score * 0.25  # Profit etwas weniger gewichtet
+            )
+
+            # Zusätzliche Qualitätskriterien
+            if strength < 1.0:  # Mindestens 1% Bewegung
+                quality *= 0.8
+            if expected_profit < 5:  # Mindestens 5% erwarteter Profit
+                quality *= 0.8
 
             return round(quality, 1)
 
         except Exception as e:
             logger.error(f"Fehler bei der Qualitätsberechnung: {e}")
-            return 7.0  # Standardwert
+            return 0.0  # Bei Fehler kein Signal senden
 
     def _notify_users_about_signal(self, signal: Dict[str, Any]):
         """Benachrichtigt Benutzer über neue Trading-Signale"""
