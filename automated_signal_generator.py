@@ -7,7 +7,6 @@ import requests
 from dex_connector import DexConnector
 from chart_analyzer import ChartAnalyzer
 from signal_processor import SignalProcessor
-from ai_trading_engine import AITradingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +25,9 @@ class AutomatedSignalGenerator:
 
         # API Endpoints
         self.coingecko_api = "https://api.coingecko.com/api/v3"
-        self.coinmarketcap_api = "https://pro-api.coinmarketcap.com/v1"
         self.solana_rpc = "https://api.mainnet-beta.solana.com"
 
-        # Initialize AI Engine
-        self.ai_engine = AITradingEngine()
-        logger.info("KI-Trading-Engine initialisiert")
+        logger.info("Signal Generator initialisiert")
 
     async def fetch_market_data(self) -> Dict[str, Any]:
         """Holt Marktdaten von verschiedenen Quellen"""
@@ -90,7 +86,7 @@ class AutomatedSignalGenerator:
             logger.info("Signal-Generator gestoppt")
 
     def generate_signals(self):
-        """Generiert Trading-Signale basierend auf KI-Analyse und Marktdaten"""
+        """Generiert Trading-Signale basierend auf technischer Analyse"""
         try:
             current_time = datetime.now(pytz.UTC)
             self.last_check_time = current_time
@@ -101,9 +97,6 @@ class AutomatedSignalGenerator:
                 logger.info(f"Zeit seit letztem Signal: {time_since_last:.1f} Minuten")
 
             logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
-
-            # Hole Marktdaten von verschiedenen Quellen
-            market_data = self.fetch_market_data()
 
             # DEX Daten
             dex_market_info = self.dex_connector.get_market_info("SOL")
@@ -119,20 +112,15 @@ class AutomatedSignalGenerator:
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
-            # KI-Vorhersage
-            ai_prediction = self.ai_engine.predict_next_move(self.chart_analyzer.data)
-
             # Detaillierte Marktanalyse Logs
             logger.info(f"Marktanalyse - Trend: {trend_analysis.get('trend')}, "
                        f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
             logger.info(f"Support/Resistance - Support: {support_resistance.get('support', 0):.2f}, "
                        f"Resistance: {support_resistance.get('resistance', 0):.2f}")
-            logger.info(f"KI-Vorhersage - Preis: {ai_prediction.get('prediction', 0):.2f}, "
-                       f"Konfidenz: {ai_prediction.get('confidence', 0):.2f}")
 
             # Erstelle Signal basierend auf Analyse
             signal = self._create_signal_from_analysis(
-                current_price, trend_analysis, support_resistance, ai_prediction, market_data
+                current_price, trend_analysis, support_resistance
             )
 
             if signal:
@@ -175,11 +163,9 @@ class AutomatedSignalGenerator:
         self, 
         current_price: float, 
         trend_analysis: Dict[str, Any],
-        support_resistance: Dict[str, float],
-        ai_prediction: Dict[str, Any],
-        market_data: Dict[str, Any]
+        support_resistance: Dict[str, float]
     ) -> Optional[Dict[str, Any]]:
-        """Erstellt ein Trading-Signal basierend auf KI und technischer Analyse"""
+        """Erstellt ein Trading-Signal basierend auf technischer Analyse"""
         try:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
@@ -192,17 +178,13 @@ class AutomatedSignalGenerator:
             support = support_resistance.get('support', 0)
             resistance = support_resistance.get('resistance', 0)
 
-            # KI-basierte Take-Profit-Berechnung
-            ai_confidence = ai_prediction.get('confidence', 0)
-            price_change = ai_prediction.get('price_change', 0)
-
-            # Dynamische Take-Profit-Berechnung basierend auf KI und Trend
+            # Dynamische Take-Profit-Berechnung basierend auf Trend
             base_tp_percent = 0.015  # 1.5% Basis Take-Profit
-            # Erhöhe Take-Profit bei starker KI-Konfidenz und Trend
-            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5) + (ai_confidence * 2))
+            # Erhöhe Take-Profit bei starkem Trend
+            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5))
             dynamic_tp_percent = base_tp_percent * tp_multiplier
 
-            if trend == 'aufwärts' or (trend == 'neutral' and price_change > 0):
+            if trend == 'aufwärts':
                 entry = current_price
                 stop_loss = max(support, current_price * 0.995)  # 0.5% Stop Loss
                 # Berechne dynamisches Take-Profit, maximal bis zum Resistance-Level
@@ -223,7 +205,7 @@ class AutomatedSignalGenerator:
                 return None
 
             signal_quality = self._calculate_signal_quality(
-                trend_analysis, strength, expected_profit, ai_confidence
+                trend_analysis, strength, expected_profit
             )
 
             if signal_quality < 3:  # Reduziert auf 3 für mehr Signale
@@ -234,7 +216,6 @@ class AutomatedSignalGenerator:
                        f"\n - Trend: {trend}"
                        f"\n - Trendstärke: {strength:.2f}%"
                        f"\n - Take-Profit-Multiplikator: {tp_multiplier:.1f}x"
-                       f"\n - KI-Konfidenz: {ai_confidence:.2f}"
                        f"\n - Erwarteter Profit: {expected_profit:.1f}%"
                        f"\n - Signalqualität: {signal_quality}/10")
 
@@ -250,8 +231,6 @@ class AutomatedSignalGenerator:
                 'expected_profit': expected_profit,
                 'signal_quality': signal_quality,
                 'trend_strength': strength,
-                'ai_confidence': ai_confidence,
-                'price_prediction': ai_prediction.get('prediction', 0)
             }
 
         except Exception as e:
@@ -260,9 +239,8 @@ class AutomatedSignalGenerator:
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], 
                                strength: float, 
-                               expected_profit: float,
-                               ai_confidence: float) -> float:
-        """Berechnet die Qualität eines Signals (0-10) - Optimierte Version mit KI"""
+                               expected_profit: float) -> float:
+        """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
             # Grundlegende Trend-Bewertung
             trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
@@ -278,34 +256,18 @@ class AutomatedSignalGenerator:
             else:
                 profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
 
-            # KI-Konfidenz Score
-            ai_score = ai_confidence * 10
-
-            # Dynamische Gewichtung basierend auf Marktsituation
-            if strength > 0.2:  # Starker Trend
-                weights = (0.2, 0.3, 0.2, 0.3)  # Mehr Gewicht auf Trendstärke und KI
-            elif expected_profit > 1.5:  # Hoher potenzieller Profit
-                weights = (0.2, 0.2, 0.3, 0.3)  # Mehr Gewicht auf Profit und KI
-            else:
-                weights = (0.25, 0.25, 0.25, 0.25)  # Ausgewogene Gewichtung
-
             # Gewichtete Summe
+            weights = (0.4, 0.3, 0.3)  # Mehr Gewicht auf Trend
             quality = (
                 trend_base * weights[0] +      # Trend-Basis
                 strength_score * weights[1] +   # Trendstärke
-                profit_score * weights[2] +     # Profit-Potenzial
-                ai_score * weights[3]          # KI-Konfidenz
+                profit_score * weights[2]       # Profit-Potenzial
             )
-
-            # Bonus für besonders starke Signale
-            if strength > 0.3 and expected_profit > 2.0 and ai_confidence > 0.8:
-                quality *= 1.2  # 20% Bonus bei perfekten Bedingungen
 
             logger.debug(f"Signal Qualitätsberechnung:"
                         f"\n - Trend Score: {trend_base} (Gewicht: {weights[0]:.1f})"
                         f"\n - Strength Score: {strength_score} (Gewicht: {weights[1]:.1f})"
                         f"\n - Profit Score: {profit_score} (Gewicht: {weights[2]:.1f})"
-                        f"\n - AI Score: {ai_score} (Gewicht: {weights[3]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
             return round(min(quality, 10), 1)
@@ -321,7 +283,7 @@ class AutomatedSignalGenerator:
             balance = self.bot.wallet_manager.get_balance()
 
             # Erstelle Prediction Chart
-            logger.info("Erstelle Prediction Chart für Trading Signal...")
+            logger.info("Erstelle Chart für Trading Signal...")
             chart_image = None
             try:
                 chart_image = self.chart_analyzer.create_prediction_chart(
@@ -331,7 +293,6 @@ class AutomatedSignalGenerator:
                 )
             except Exception as chart_error:
                 logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
-                # Fahre mit der Signal-Nachricht fort, auch wenn das Chart fehlschlägt
 
             signal_message = (
                 f"⚡ SCHNELLES TRADING SIGNAL!\n\n"

@@ -1,7 +1,6 @@
 import logging
 from dex_connector import DexConnector
 from chart_analyzer import ChartAnalyzer
-from ai_trading_engine import AITradingEngine
 from datetime import datetime
 import time
 import pandas as pd
@@ -15,11 +14,10 @@ logger = logging.getLogger(__name__)
 def test_market_data():
     dex = DexConnector()
     analyzer = ChartAnalyzer()
-    ai_engine = AITradingEngine()
 
-    logger.info("Starting market data and AI test...")
+    logger.info("Starting market data test...")
 
-    # Test 5 price updates with AI analysis
+    # Test 5 price updates with basic analysis
     price_data = []
     for i in range(5):
         try:
@@ -48,14 +46,6 @@ def test_market_data():
                     # Update chart data
                     analyzer.update_price_data(dex, "SOL")
 
-                    # Get AI prediction
-                    prediction = ai_engine.predict_next_move(df)
-                    if prediction['prediction'] is not None:
-                        logger.info(f"AI Prediction:"
-                                  f"\n - Next Price: {prediction['prediction']:.2f}"
-                                  f"\n - Confidence: {prediction['confidence']:.2f}"
-                                  f"\n - Signal: {prediction['signal']}")
-
                     # Analyze trend
                     trend = analyzer.analyze_trend()
                     logger.info(f"Trend Analysis: {trend}")
@@ -71,7 +61,7 @@ def test_market_data():
 
         time.sleep(5)  # Wait 5 seconds between updates
 
-    logger.info("Market data and AI test completed")
+    logger.info("Market data test completed")
 
 if __name__ == "__main__":
     test_market_data()

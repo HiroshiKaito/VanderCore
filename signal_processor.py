@@ -3,7 +3,6 @@ import logging
 from datetime import datetime
 from chart_analyzer import ChartAnalyzer
 from risk_analyzer import RiskAnalyzer
-from ai_trading_engine import AITradingEngine
 
 logger = logging.getLogger(__name__)
 
@@ -12,25 +11,19 @@ class SignalProcessor:
         self.active_signals: List[Dict[str, Any]] = []
         self.chart_analyzer = ChartAnalyzer()
         self.risk_analyzer = RiskAnalyzer()
-        self.ai_engine = AITradingEngine()  # Neue KI-Engine
 
     def process_signal(self, signal_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Verarbeitet ein eingehendes Trading Signal mit KI-Unterstützung"""
+        """Verarbeitet ein eingehendes Trading Signal"""
         try:
             # Chart-Analyse durchführen
             self.chart_analyzer.update_price_data(signal_data.get('dex_connector'), signal_data.get('token_address'))
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
-            # KI-Vorhersage abrufen
-            ai_prediction = self.ai_engine.predict_next_move(
-                self.chart_analyzer.data
-            )
-
-            # Berechne erwartete Rendite basierend auf KI-Vorhersage
+            # Berechne erwartete Rendite basierend auf technischer Analyse
             entry_price = float(signal_data.get('entry', 0))
-            predicted_price = ai_prediction.get('prediction', entry_price)
-            expected_profit_percent = ((predicted_price - entry_price) / entry_price) * 100 if entry_price > 0 else 0
+            trend_strength = trend_analysis.get('stärke', 0)
+            expected_profit_percent = signal_data.get('expected_profit', 0)
 
             # Risikoanalyse
             risk_score, risk_recommendations = self.risk_analyzer.analyze_transaction_risk(
@@ -52,13 +45,10 @@ class SignalProcessor:
                 'expected_profit': expected_profit_percent,
                 'risk_score': risk_score,
                 'risk_recommendations': risk_recommendations,
-                'ai_confidence': ai_prediction.get('confidence', 0),
-                'predicted_price': predicted_price,
                 'signal_quality': self._calculate_signal_quality(
                     trend_analysis, 
                     risk_score, 
-                    expected_profit_percent,
-                    ai_prediction.get('confidence', 0)
+                    expected_profit_percent
                 )
             }
 
@@ -95,9 +85,8 @@ class SignalProcessor:
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], 
                                risk_score: float, 
-                               expected_profit: float,
-                               ai_confidence: float) -> float:
-        """Berechnet die Qualität eines Signals (0-10) mit KI-Einfluss"""
+                               expected_profit: float) -> float:
+        """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
             # Grundlegende Trend-Bewertung
             trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
@@ -113,34 +102,27 @@ class SignalProcessor:
             else:
                 profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
 
-            # KI-Konfidenz-Score
-            ai_score = ai_confidence * 10  # Konvertiere 0-1 zu 0-10
-
-            # Dynamische Gewichtung basierend auf KI-Konfidenz
-            if ai_confidence > 0.8:  # Hohe KI-Konfidenz
-                weights = (0.2, 0.2, 0.3, 0.3)  # Mehr Gewicht auf KI und Profit
-            elif ai_confidence > 0.6:  # Mittlere KI-Konfidenz
-                weights = (0.25, 0.25, 0.25, 0.25)  # Ausgewogene Gewichtung
-            else:  # Niedrige KI-Konfidenz
-                weights = (0.3, 0.3, 0.3, 0.1)  # Weniger Gewicht auf KI
+            # Risiko-Score (0-10, wobei 10 das niedrigste Risiko ist)
+            risk_score = (1 - risk_score) * 10
 
             # Gewichtete Summe
+            weights = (0.3, 0.2, 0.3, 0.2)  # Ausgeglichene Gewichtung
             quality = (
                 trend_base * weights[0] +          # Trend-Basis
                 strength_score * weights[1] +      # Trendstärke
                 profit_score * weights[2] +        # Profit-Potenzial
-                ai_score * weights[3]              # KI-Konfidenz
+                risk_score * weights[3]            # Risiko-Score
             )
 
-            # Bonus für besonders starke Signale mit hoher KI-Konfidenz
-            if ai_confidence > 0.8 and expected_profit > 2.0:
+            # Bonus für besonders starke Signale mit niedrigem Risiko
+            if strength_score > 8 and risk_score > 8:
                 quality *= 1.1  # 10% Bonus
 
             logger.debug(f"Signal Qualitätsberechnung:"
                         f"\n - Trend Score: {trend_base:.1f} (Gewicht: {weights[0]:.1f})"
                         f"\n - Strength Score: {strength_score:.1f} (Gewicht: {weights[1]:.1f})"
                         f"\n - Profit Score: {profit_score:.1f} (Gewicht: {weights[2]:.1f})"
-                        f"\n - AI Score: {ai_score:.1f} (Gewicht: {weights[3]:.1f})"
+                        f"\n - Risk Score: {risk_score:.1f} (Gewicht: {weights[3]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
             return round(min(quality, 10), 1)

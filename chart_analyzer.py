@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any
 import logging
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
@@ -12,7 +12,7 @@ class ChartAnalyzer:
     def __init__(self):
         self.data = pd.DataFrame()
         self.last_update = None
-        self.min_data_points = 2  # Minimum für schnelle Signale
+        self.min_data_points = 2
         self.last_support = None
         self.last_resistance = None
 
