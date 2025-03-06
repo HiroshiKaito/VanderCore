@@ -15,31 +15,35 @@ async def test_ai_trading():
         logger.info("AI Trading Engine initialisiert")
 
         # Erstelle Test-Daten
-        dates = pd.date_range(start='2025-01-01', end='2025-03-06', freq='H')
+        dates = pd.date_range(start='2025-01-01', end='2025-03-06', freq='h')
         test_data = pd.DataFrame({
-            'close': range(len(dates)),
-            'volume': [1000000] * len(dates),
+            'close': [100 + i * 0.1 for i in range(len(dates))],  # Aufsteigender Trend
+            'volume': [1000000 + i * 1000 for i in range(len(dates))],  # Steigendes Volumen
             'timestamp': dates
         })
         logger.info(f"Test-Daten erstellt mit {len(dates)} Datenpunkten")
 
         # Teste Vorhersage
         prediction = await engine.predict_next_move(test_data)
-        
-        logger.info("\nVorhersage-Ergebnisse:")
-        logger.info(f"Preisvorhersage: {prediction['prediction']:.2f}")
-        logger.info(f"Konfidenz: {prediction['confidence']:.2f}")
-        logger.info(f"Signal: {prediction['signal']}")
-        logger.info(f"Sentiment Score: {prediction['sentiment']['overall_score']:.2f}")
 
-        # Teste Sentiment-Analyse separat
-        sentiment = await engine.sentiment_analyzer.analyze_market_sentiment()
-        
-        logger.info("\nSentiment-Analyse:")
-        logger.info(f"Gesamt-Score: {sentiment['overall_score']:.2f}")
-        for source, data in sentiment['sources'].items():
-            logger.info(f"{source}: Score {data['score']:.2f}, "
-                     f"Konfidenz {data['confidence']:.2f}")
+        if prediction and 'prediction' in prediction:
+            logger.info("\nVorhersage-Ergebnisse:")
+            logger.info(f"Preisvorhersage: {prediction.get('prediction', 'N/A')}")
+            logger.info(f"Konfidenz: {prediction.get('confidence', 0):.2f}")
+            logger.info(f"Signal: {prediction.get('signal', 'neutral')}")
+            logger.info(f"Sentiment Score: {prediction.get('sentiment', {}).get('overall_score', 0):.2f}")
+
+            # Teste Sentiment-Analyse separat
+            sentiment = await engine.sentiment_analyzer.analyze_market_sentiment()
+
+            logger.info("\nSentiment-Analyse:")
+            logger.info(f"Gesamt-Score: {sentiment.get('overall_score', 0):.2f}")
+            for source, data in sentiment.get('sources', {}).items():
+                if isinstance(data, dict):
+                    logger.info(f"{source}: Score {data.get('score', 0):.2f}, "
+                            f"Konfidenz {data.get('confidence', 0):.2f}")
+        else:
+            logger.warning("Keine gültige Vorhersage erhalten")
 
     except Exception as e:
         logger.error(f"Fehler beim Testen: {e}")

@@ -10,6 +10,7 @@ import requests
 from datetime import datetime, timedelta
 import asyncio
 from sentiment_analyzer import SentimentAnalyzer
+from risk_analyzer import RiskAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class AITradingEngine:
         self.last_prediction = None
         self.confidence_threshold = 0.75
         self.sentiment_analyzer = SentimentAnalyzer()
+        self.risk_analyzer = RiskAnalyzer()
 
         # API Endpoints
         self.coingecko_api = "https://api.coingecko.com/api/v3"
@@ -35,11 +37,16 @@ class AITradingEngine:
 
     def _init_model(self):
         """Initialisiert das ML-Modell"""
-        self.model = RandomForestRegressor(
-            n_estimators=100,
-            max_depth=10,
-            random_state=42
-        )
+        try:
+            self.model = RandomForestRegressor(
+                n_estimators=100,
+                max_depth=10,
+                random_state=42
+            )
+            logger.info("Random Forest Modell erfolgreich initialisiert")
+        except Exception as e:
+            logger.error(f"Fehler bei der Modell-Initialisierung: {e}")
+            self.model = None
 
     def prepare_features(self, price_data: pd.DataFrame) -> np.ndarray:
         """Bereitet Features für das ML-Modell vor"""
@@ -47,13 +54,19 @@ class AITradingEngine:
             df = price_data.copy()
 
             # Technische Indikatoren
-            df['rsi'] = ta.momentum.rsi(df['close'], window=14)
-            macd = ta.trend.macd(df['close'])
-            df['macd'] = macd.iloc[:, 0]
-            bb = ta.volatility.BollingerBands(df['close'])
-            df['bb_upper'] = bb.bollinger_hband()
-            df['bb_lower'] = bb.bollinger_lband()
+            df['rsi'] = ta.momentum.RSIIndicator(df['close']).rsi()
+            macd_indicator = ta.trend.MACD(df['close'])
+            df['macd'] = macd_indicator.macd()
+            df['macd_signal'] = macd_indicator.macd_signal()
+
+            bollinger = ta.volatility.BollingerBands(df['close'])
+            df['bb_upper'] = bollinger.bollinger_hband()
+            df['bb_lower'] = bollinger.bollinger_lband()
+            df['bb_mavg'] = bollinger.bollinger_mavg()
+
+            # Volumen-Indikatoren
             df['volume_sma'] = ta.trend.sma_indicator(df['volume'], window=20)
+            df['volume_ema'] = ta.trend.ema_indicator(df['volume'], window=20)
 
             # Preisbewegungen
             df['price_change'] = df['close'].pct_change()
@@ -70,15 +83,17 @@ class AITradingEngine:
                 df['sentiment_std'] = 0.1
 
             feature_columns = [
-                'close', 'volume', 'rsi', 'macd', 'bb_upper', 'bb_lower',
-                'price_change', 'volatility', 'volume_change', 'trend_strength',
-                'sentiment_ma', 'sentiment_std'
+                'rsi', 'macd', 'macd_signal', 'bb_upper', 'bb_lower', 'bb_mavg',
+                'volume_sma', 'volume_ema', 'price_change', 'volatility', 
+                'volume_change', 'trend_strength', 'sentiment_ma', 'sentiment_std'
             ]
 
             # Entferne NaN-Werte
             df = df.fillna(method='ffill').fillna(method='bfill')
 
-            return self.scaler.fit_transform(df[feature_columns])
+            # Skaliere Features
+            features = df[feature_columns].values
+            return self.scaler.fit_transform(features)
 
         except Exception as e:
             logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")
@@ -88,7 +103,7 @@ class AITradingEngine:
         """Sagt die nächste Kursbewegung vorher"""
         try:
             if self.model is None:
-                self._build_model()
+                self._init_model()
 
             # Hole Sentiment-Daten
             sentiment_data = await self.sentiment_analyzer.analyze_market_sentiment()
@@ -101,11 +116,24 @@ class AITradingEngine:
             # Verwende die letzten Datenpunkte für die Vorhersage
             prediction = self.model.predict(X[-1:])
             current_price = current_data['close'].iloc[-1]
-            predicted_price = self.scaler.inverse_transform(prediction.reshape(-1, 1))[0][0]
+            predicted_price = prediction[0]
 
             price_change = (predicted_price - current_price) / current_price * 100
             volatility = current_data['close'].rolling(window=20).std().iloc[-1]
             volume_trend = current_data['volume'].pct_change().rolling(window=5).mean().iloc[-1]
+
+            # Berechne Stoploss und Positionsgröße
+            volume_24h = float(current_data['volume'].iloc[-24:].sum())
+            position_size, position_recommendation = self.risk_analyzer.calculate_position_size(
+                account_balance=10000,  # Beispielwert, sollte aus Wallet kommen
+                current_price=current_price,
+                volume_24h=volume_24h
+            )
+
+            stoploss, takeprofit = self.risk_analyzer.calculate_stoploss(
+                entry_price=current_price,
+                direction='long' if price_change > 0 else 'short'
+            )
 
             # Berücksichtige Sentiment in der Konfidenzberechnung
             confidence = self._calculate_confidence(
@@ -124,6 +152,12 @@ class AITradingEngine:
                 'volatility': volatility,
                 'volume_trend': volume_trend,
                 'sentiment': sentiment_data,
+                'risk_management': {
+                    'position_size': position_size,
+                    'position_recommendation': position_recommendation,
+                    'stoploss': stoploss,
+                    'takeprofit': takeprofit
+                },
                 'timestamp': pd.Timestamp.now().timestamp()
             }
 
@@ -164,11 +198,30 @@ class AITradingEngine:
             logger.error(f"Fehler bei der Konfidenzberechnung: {e}")
             return 0.0
 
+    def train_model(self, training_data: pd.DataFrame):
+        """Trainiert das Random Forest Modell"""
+        if self.model is None:
+            self._init_model()
+
+        try:
+            X = self.prepare_features(training_data[:-1])  # Alle außer dem letzten Datenpunkt
+            y = training_data['close'].iloc[1:].values  # Verschiebe um einen Zeitschritt
+
+            if len(X) == 0 or len(y) == 0:
+                logger.error("Keine Trainingsdaten verfügbar")
+                return
+
+            self.model.fit(X, y)
+            logger.info("Modell erfolgreich trainiert")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Training: {e}")
+
     def _predict_with_technical_analysis(self, data: pd.DataFrame) -> Dict[str, Any]:
         """Fallback-Vorhersage basierend auf technischer Analyse"""
         try:
-            rsi = ta.momentum.rsi(data['close'], window=14).iloc[-1]
-            macd = ta.trend.macd(data['close']).iloc[-1, 0]
+            rsi = ta.momentum.RSIIndicator(data['close']).rsi().iloc[-1]
+            macd = ta.trend.MACD(data['close']).macd().iloc[-1]
 
             price = data['close'].iloc[-1]
             price_change = data['close'].pct_change().iloc[-1] * 100
@@ -202,7 +255,6 @@ class AITradingEngine:
         except Exception as e:
             logger.error(f"Fehler bei der technischen Analyse: {e}")
             return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
-
 
     async def fetch_market_data(self) -> Dict[str, Any]:
         """Holt erweiterte Marktdaten von verschiedenen Quellen"""
@@ -308,56 +360,6 @@ class AITradingEngine:
                 logger.error(f"DEX Screener API Fehler: {e}")
                 data['dex_screener'] = await self._get_solana_rpc_fallback()
 
-            # Nitter (Twitter Alternative) Sentiment
-            try:
-                nitter_params = {
-                    'f': 'tweets',
-                    'q': 'solana language:de OR language:en',
-                    'since': '12h'  # Reduziert auf 12h für bessere Performance
-                }
-                retry_count = 0
-                max_retries = 3
-
-                while retry_count < max_retries:
-                    try:
-                        response = requests.get(
-                            self.nitter_api,
-                            params=nitter_params,
-                            headers=headers,
-                            timeout=20,  # Erhöhtes Timeout
-                        )
-                        if response.status_code == 200:
-                            data['nitter'] = {
-                                'text': response.text,
-                                'timestamp': datetime.now().isoformat()
-                            }
-                            logger.info("Nitter Daten erfolgreich abgerufen")
-                            break
-                        elif response.status_code == 429:  # Rate Limit
-                            retry_count += 1
-                            if retry_count < max_retries:
-                                await asyncio.sleep(2 ** retry_count)  # Exponential backoff
-                                continue
-                            logger.warning("Nitter Rate Limit erreicht nach allen Versuchen")
-                            break
-                        else:
-                            logger.warning(f"Nitter API Fehler: {response.status_code}")
-                            if retry_count < max_retries - 1:
-                                retry_count += 1
-                                await asyncio.sleep(2 ** retry_count)
-                                continue
-                            break
-                    except requests.exceptions.RequestException as e:
-                        logger.error(f"Nitter Request Fehler: {e}")
-                        if retry_count < max_retries - 1:
-                            retry_count += 1
-                            await asyncio.sleep(2 ** retry_count)
-                            continue
-                        break
-
-            except Exception as e:
-                logger.error(f"Nitter API Fehler: {e}")
-
             if not data:
                 logger.warning("Keine Marktdaten konnten abgerufen werden")
             else:
@@ -445,22 +447,3 @@ class AITradingEngine:
         except Exception as e:
             logger.error(f"Fehler beim Backtesting: {e}")
             return {}
-
-    def train_model(self, training_data: pd.DataFrame):
-        """Trainiert das Random Forest Modell"""
-        if self.model is None:
-            self._build_model()
-
-        try:
-            X = self.prepare_features(training_data[:-1])  # Alle außer dem letzten Datenpunkt
-            y = training_data['close'].iloc[1:].values  # Verschiebe um einen Zeitschritt
-
-            if len(X) == 0 or len(y) == 0:
-                logger.error("Keine Trainingsdaten verfügbar")
-                return
-
-            self.model.fit(X, y)
-            logger.info("Modell erfolgreich trainiert")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Training: {e}")

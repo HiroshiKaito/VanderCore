@@ -3,6 +3,8 @@ from textblob import TextBlob
 import requests
 from datetime import datetime, timedelta
 import json
+from typing import Dict, Any, Optional
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,16 @@ class SentimentAnalyzer:
         self.coingecko_api = "https://api.coingecko.com/api/v3"
         self.dex_screener_api = "https://api.dexscreener.com/latest"
         self.nitter_api = "https://nitter.cz/search"
+
+        # API Konfiguration
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; SolanaBot/1.0)',
+            'Accept': 'application/json'
+        }
+
+        # Retry Konfiguration
+        self.max_retries = 3
+        self.retry_delay = 2  # Sekunden
 
     async def analyze_market_sentiment(self) -> dict:
         """Analysiert die Marktstimmung aus verschiedenen Quellen"""
@@ -37,77 +49,150 @@ class SentimentAnalyzer:
             if dex_data:
                 sentiment_data['sources']['dex'] = self._analyze_dex_sentiment(dex_data)
 
-            # Berechne Gesamtscore
-            scores = [source['score'] for source in sentiment_data['sources'].values()]
-            if scores:
-                sentiment_data['overall_score'] = sum(scores) / len(scores)
+            # Berechne Gesamtscore mit Gewichtung
+            scores = []
+            weights = {'coingecko': 0.4, 'social': 0.3, 'dex': 0.3}
 
-            logger.info(f"Sentiment Analyse abgeschlossen - Score: {sentiment_data['overall_score']:.2f}")
+            for source, data in sentiment_data['sources'].items():
+                if data['confidence'] > 0:
+                    scores.append(data['score'] * weights.get(source, 0.3))
+
+            if scores:
+                sentiment_data['overall_score'] = sum(scores) / sum(weights.values())
+                logger.info(f"Sentiment Analyse abgeschlossen - Score: {sentiment_data['overall_score']:.2f}")
+            else:
+                sentiment_data['overall_score'] = 0.5
+                logger.warning("Keine validen Sentiment-Daten gefunden, verwende neutralen Score")
+
             return sentiment_data
 
         except Exception as e:
             logger.error(f"Fehler bei der Sentiment-Analyse: {e}")
-            return {'overall_score': 0, 'sources': {}, 'error': str(e)}
+            return {'overall_score': 0.5, 'sources': {}, 'error': str(e)}
 
-    async def _fetch_coingecko_data(self) -> dict:
-        """Holt Solana-Daten von CoinGecko"""
-        try:
-            response = requests.get(
-                f"{self.coingecko_api}/simple/price",
-                params={
-                    'ids': 'solana',
-                    'vs_currencies': 'usd',
-                    'include_24hr_vol': True,
-                    'include_24hr_change': True,
-                    'include_last_updated_at': True
-                },
-                timeout=10
-            )
-            if response.status_code == 200:
-                return response.json()
-            logger.warning(f"CoinGecko API Fehler: {response.status_code}")
-            return {}
-        except Exception as e:
-            logger.error(f"Fehler beim Abrufen der CoinGecko-Daten: {e}")
-            return {}
+    async def _fetch_coingecko_data(self) -> Dict[str, Any]:
+        """Holt Solana-Daten von CoinGecko mit Retry-Mechanismus"""
+        for attempt in range(self.max_retries):
+            try:
+                logger.debug("Versuche CoinGecko API Abruf")
+                response = requests.get(
+                    f"{self.coingecko_api}/simple/price",
+                    params={
+                        'ids': 'solana',
+                        'vs_currencies': 'usd',
+                        'include_24hr_vol': True,
+                        'include_24hr_change': True,
+                        'include_last_updated_at': True
+                    },
+                    headers=self.headers,
+                    timeout=10
+                )
 
-    async def _fetch_social_data(self) -> list:
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'solana' in data:
+                        logger.info("CoinGecko Daten erfolgreich abgerufen")
+                        return data
+                    logger.warning("Unerwartetes CoinGecko Datenformat")
+                    return {}
+
+                if response.status_code == 429:  # Rate Limit
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.warning(f"CoinGecko Rate Limit - Warte {wait_time}s")
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                logger.warning(f"CoinGecko API Fehler: {response.status_code}")
+                return {}
+
+            except Exception as e:
+                logger.error(f"Fehler beim Abrufen der CoinGecko-Daten: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                return {}
+
+        return {}
+
+    async def _fetch_social_data(self) -> str:
         """Holt Social Media Daten über Nitter"""
-        try:
-            params = {
-                'f': 'tweets',
-                'q': 'solana language:de OR language:en',
-                'since': '24h'
-            }
-            response = requests.get(self.nitter_api, params=params, timeout=15)
-            if response.status_code == 200:
-                return response.text
-            logger.warning(f"Nitter API Fehler: {response.status_code}")
-            return []
-        except Exception as e:
-            logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
-            return []
+        for attempt in range(self.max_retries):
+            try:
+                params = {
+                    'f': 'tweets',
+                    'q': 'solana language:de OR language:en',
+                    'since': '24h'
+                }
+                response = requests.get(
+                    self.nitter_api,
+                    params=params,
+                    headers=self.headers,
+                    timeout=15
+                )
 
-    async def _fetch_dex_data(self) -> dict:
-        """Holt DEX-Daten für Solana"""
-        try:
-            response = requests.get(
-                f"{self.dex_screener_api}/pairs/solana",
-                timeout=15
-            )
-            if response.status_code == 200:
-                return response.json()
-            logger.warning(f"DEX Screener API Fehler: {response.status_code}")
-            return {}
-        except Exception as e:
-            logger.error(f"Fehler beim Abrufen der DEX-Daten: {e}")
-            return {}
+                if response.status_code == 200:
+                    logger.info("Social Media Daten erfolgreich abgerufen")
+                    return response.text
 
-    def _analyze_coingecko_sentiment(self, data: dict) -> dict:
+                if response.status_code == 429:  # Rate Limit
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.warning(f"Nitter Rate Limit - Warte {wait_time}s")
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                logger.warning(f"Nitter API Fehler: {response.status_code}")
+                return ""
+
+            except Exception as e:
+                logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                return ""
+
+        return ""
+
+    async def _fetch_dex_data(self) -> Dict[str, Any]:
+        """Holt DEX-Daten für Solana mit Retry-Mechanismus"""
+        for attempt in range(self.max_retries):
+            try:
+                response = requests.get(
+                    f"{self.dex_screener_api}/pairs/solana",
+                    headers=self.headers,
+                    timeout=15
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'pairs' in data:
+                        logger.info("DEX Daten erfolgreich abgerufen")
+                        return data
+                    logger.warning("Unerwartetes DEX Screener Datenformat")
+                    return {}
+
+                if response.status_code == 429:  # Rate Limit
+                    wait_time = self.retry_delay * (2 ** attempt)
+                    logger.warning(f"DEX Screener Rate Limit - Warte {wait_time}s")
+                    await asyncio.sleep(wait_time)
+                    continue
+
+                logger.warning(f"DEX Screener API Fehler: {response.status_code}")
+                return {}
+
+            except Exception as e:
+                logger.error(f"Fehler beim Abrufen der DEX-Daten: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                return {}
+
+        return {}
+
+    def _analyze_coingecko_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert CoinGecko Daten für Sentiment"""
         try:
             if 'solana' not in data:
-                return {'score': 0, 'confidence': 0}
+                return {'score': 0.5, 'confidence': 0}
 
             sol_data = data['solana']
             price_change = sol_data.get('usd_24h_change', 0)
@@ -131,18 +216,30 @@ class SentimentAnalyzer:
 
         except Exception as e:
             logger.error(f"Fehler bei der CoinGecko Sentiment-Analyse: {e}")
-            return {'score': 0, 'confidence': 0}
+            return {'score': 0.5, 'confidence': 0}
 
-    def _analyze_social_sentiment(self, text_data: str) -> dict:
+    def _analyze_social_sentiment(self, text_data: str) -> Dict[str, Any]:
         """Analysiert Social Media Text mit TextBlob"""
         try:
+            if not text_data:
+                return {'score': 0.5, 'confidence': 0}
+
+            # Bereinige Text und bereite ihn für die Analyse vor
+            text_data = ' '.join(text_data.split())  # Normalisiere Whitespace
+            text_data = text_data.replace('\n', ' ').strip()
+
             blob = TextBlob(text_data)
             sentiment_scores = []
 
             for sentence in blob.sentences:
+                # Filtere leere oder zu kurze Sätze
+                if len(sentence.words) < 3:
+                    continue
+
                 sentiment_scores.append(sentence.sentiment.polarity)
 
             if not sentiment_scores:
+                logger.warning("Keine verwertbaren Sätze für Sentiment-Analyse gefunden")
                 return {'score': 0.5, 'confidence': 0}
 
             avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
@@ -153,7 +250,12 @@ class SentimentAnalyzer:
                 'confidence': min(len(sentiment_scores) / 10, 1),  # Konfidenz basierend auf Datenmenge
                 'metrics': {
                     'sample_size': len(sentiment_scores),
-                    'raw_sentiment': avg_sentiment
+                    'raw_sentiment': avg_sentiment,
+                    'sentiment_distribution': {
+                        'positive': sum(1 for s in sentiment_scores if s > 0.1),
+                        'neutral': sum(1 for s in sentiment_scores if -0.1 <= s <= 0.1),
+                        'negative': sum(1 for s in sentiment_scores if s < -0.1)
+                    }
                 }
             }
 
@@ -161,7 +263,7 @@ class SentimentAnalyzer:
             logger.error(f"Fehler bei der Social Media Sentiment-Analyse: {e}")
             return {'score': 0.5, 'confidence': 0}
 
-    def _analyze_dex_sentiment(self, data: dict) -> dict:
+    def _analyze_dex_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert DEX-Daten für Sentiment"""
         try:
             if 'pairs' not in data:
