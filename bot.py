@@ -1,4 +1,5 @@
 import logging
+import pytz # Added for timezone awareness
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater,
@@ -9,7 +10,7 @@ from telegram.ext import (
     CallbackContext
 )
 from telegram.error import Conflict, NetworkError, TelegramError
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 import time
@@ -22,6 +23,7 @@ from signal_processor import SignalProcessor
 from dex_connector import DexConnector
 from automated_signal_generator import AutomatedSignalGenerator
 from apscheduler.schedulers.background import BackgroundScheduler
+import pandas as pd
 
 # Flask App für Replit
 app = Flask(__name__)
@@ -632,6 +634,7 @@ class SolanaWalletBot:
         """Generiert ein Test-Signal"""
         logger.info("Test-Signal wird generiert...")
         try:
+            current_time = datetime.now(pytz.UTC)
             # Erstelle ein Test-Signal
             test_signal = {
                 'pair': 'SOL/USD',
@@ -639,7 +642,7 @@ class SolanaWalletBot:
                 'entry': 145.50,
                 'stop_loss': 144.50,
                 'take_profit': 147.50,
-                'timestamp': datetime.now().timestamp(),
+                'timestamp': current_time.timestamp(),
                 'dex_connector': self.dex_connector,
                 'token_address': "SOL",
                 'expected_profit': 1.37,
@@ -648,6 +651,7 @@ class SolanaWalletBot:
             }
 
             # Verarbeite das Signal
+            logger.info("Verarbeite Test-Signal...")
             processed_signal = self.signal_processor.process_signal(test_signal)
             if processed_signal:
                 logger.info("Test-Signal erfolgreich verarbeitet, sende Benachrichtigung...")
@@ -670,9 +674,6 @@ class SolanaWalletBot:
                 # Falls keine Chart-Daten vorhanden sind, simuliere Dummy-Daten für den Test
                 if self.signal_generator.chart_analyzer.data.empty:
                     logger.info("Keine echten Marktdaten verfügbar, erstelle Dummy-Daten für Test")
-                    import pandas as pd
-                    from datetime import datetime, timedelta
-                    now = datetime.now()
                     # Erstelle Dummy OHLC-Daten (10 Datenpunkte über die letzten 30 Minuten)
                     dummy_data = pd.DataFrame({
                         'Open': [test_signal['entry']]*10,
@@ -680,11 +681,12 @@ class SolanaWalletBot:
                         'Low': [test_signal['entry']*0.99]*10,
                         'Close': [test_signal['entry']]*10,
                         'Volume': [1000000]*10
-                    }, index=[now - timedelta(minutes=30-3*i) for i in range(10)])
+                    }, index=[current_time - timedelta(minutes=30-3*i) for i in range(10)])
                     self.signal_generator.chart_analyzer.data = dummy_data
                     logger.info("Dummy-Chart-Daten generiert")
 
-                # Generiere Chart direkt hier für bessere Kontrolle
+                # Versuche Chart zu generieren bevor das Signal gesendet wird
+                logger.info("Generiere Chart...")
                 chart_image = self.signal_generator.chart_analyzer.create_prediction_chart(
                     entry_price=processed_signal['entry'],
                     target_price=processed_signal['take_profit'],
@@ -701,8 +703,15 @@ class SolanaWalletBot:
                 logger.info(f"User {update.effective_user.id} zu aktiven Nutzern hinzugefügt")
 
                 # Sende das Signal direkt ohne zusätzliche Bestätigungsnachricht
-                self.signal_generator._notify_users_about_signal(processed_signal)
+                logger.info("Sende Signal an Benutzer...")
+                try:
+                    self.signal_generator._notify_users_about_signal(processed_signal)
+                    logger.info("Signal erfolgreich gesendet")
+                except Exception as send_error:
+                    logger.error(f"Fehler beim Senden des Signals: {send_error}")
+                    update.message.reply_text("❌ Fehler beim Senden des Test-Signals")
             else:
+                logger.error("Signal konnte nicht verarbeitet werden")
                 update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
         except Exception as e:
             logger.error(f"Fehler beim Generieren des Test-Signals: {e}")
@@ -765,7 +774,7 @@ class SolanaWalletBot:
             self.load_state()
 
             # Initialisiere Updater
-            self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
+            self.updater= Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
             dp = self.updater.dispatcher
 
             # Registriere Handler

@@ -1,3 +1,4 @@
+"""SignalProcessor class for handling trading signals"""
 from typing import Dict, Any, List
 import logging
 from datetime import datetime
@@ -16,12 +17,26 @@ class SignalProcessor:
         """Verarbeitet ein eingehendes Trading Signal"""
         try:
             logger.info("Verarbeite neues Trading Signal")
-            logger.debug(f"Signal Daten: {signal_data}")
+            logger.debug(f"Signal Eingangsdaten: {signal_data}")
+
+            # Validiere Signal-Daten
+            if not self.validate_signal(signal_data):
+                logger.error("Signal-Validierung fehlgeschlagen")
+                return {}
 
             # Chart-Analyse durchführen
-            self.chart_analyzer.update_price_data(signal_data.get('dex_connector'), signal_data.get('token_address'))
-            trend_analysis = self.chart_analyzer.analyze_trend()
-            support_resistance = self.chart_analyzer.get_support_resistance()
+            try:
+                self.chart_analyzer.update_price_data(
+                    signal_data.get('dex_connector'),
+                    signal_data.get('token_address', 'SOL')
+                )
+                trend_analysis = self.chart_analyzer.analyze_trend()
+                support_resistance = self.chart_analyzer.get_support_resistance()
+                logger.debug(f"Chart-Analyse erfolgreich - Trend: {trend_analysis}, Support/Resistance: {support_resistance}")
+            except Exception as chart_error:
+                logger.warning(f"Chart-Analyse fehlgeschlagen: {chart_error}, verwende Standard-Werte")
+                trend_analysis = {'trend': 'neutral', 'stärke': 0}
+                support_resistance = {'support': 0, 'resistance': 0}
 
             # Berechne erwartete Rendite basierend auf technischer Analyse
             entry_price = float(signal_data.get('entry', 0))
@@ -29,10 +44,17 @@ class SignalProcessor:
             expected_profit_percent = signal_data.get('expected_profit', 0)
 
             # Risikoanalyse
-            risk_score, risk_recommendations = self.risk_analyzer.analyze_transaction_risk(
-                float(signal_data.get('entry', 0)), []
-            )
+            try:
+                risk_score, risk_recommendations = self.risk_analyzer.analyze_transaction_risk(
+                    float(signal_data.get('entry', 0)), []
+                )
+                logger.debug(f"Risikoanalyse erfolgreich - Score: {risk_score}")
+            except Exception as risk_error:
+                logger.warning(f"Risikoanalyse fehlgeschlagen: {risk_error}, verwende Standard-Werte")
+                risk_score = 5
+                risk_recommendations = []
 
+            # Erstelle verarbeitetes Signal
             processed_signal = {
                 'timestamp': datetime.now().timestamp(),
                 'pair': signal_data.get('pair', ''),
@@ -62,10 +84,10 @@ class SignalProcessor:
                        f"\n - Trend: {processed_signal['trend']}"
                        f"\n - Trendstärke: {processed_signal['trend_strength']:.2f}")
 
-            # Reduziere die Qualitätsschwelle für mehr Signale
-            if processed_signal['signal_quality'] >= 3:  # Weiter reduziert von 4 auf 3
+            # Reduziere die Qualitätsschwelle für Test-Signale
+            if processed_signal['signal_quality'] >= 3:  # Weiter reduziert für Tests
                 self.active_signals.append(processed_signal)
-                logger.info(f"Hochwertiges Signal verarbeitet: {processed_signal['pair']} "
+                logger.info(f"Signal akzeptiert: {processed_signal['pair']} "
                            f"(Qualität: {processed_signal['signal_quality']}/10)")
                 return processed_signal
             else:
@@ -80,16 +102,23 @@ class SignalProcessor:
     def validate_signal(self, signal_data: Dict[str, Any]) -> bool:
         """Überprüft ob ein Signal gültig ist"""
         required_fields = ['pair', 'direction', 'entry', 'stop_loss', 'take_profit']
-        return all(field in signal_data for field in required_fields)
+        for field in required_fields:
+            if field not in signal_data:
+                logger.error(f"Fehlendes Pflichtfeld im Signal: {field}")
+                return False
+            if not signal_data[field]:
+                logger.error(f"Leeres Pflichtfeld im Signal: {field}")
+                return False
+        return True
 
     def get_active_signals(self) -> List[Dict[str, Any]]:
         """Gibt alle aktiven Signale zurück"""
         return [signal for signal in self.active_signals if signal['status'] == 'neu']
-
+    
     def get_executed_signals(self) -> List[Dict[str, Any]]:
         """Gibt alle ausgeführten Signale zurück"""
         return [signal for signal in self.active_signals if signal['status'] == 'ausgeführt']
-
+    
     def mark_signal_executed(self, signal_id: int):
         """Markiert ein Signal als ausgeführt"""
         if 0 <= signal_id < len(self.active_signals):
@@ -97,23 +126,25 @@ class SignalProcessor:
             logger.info(f"Signal {signal_id} als ausgeführt markiert")
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], 
-                                 risk_score: float, 
-                                 expected_profit: float) -> float:
-        """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
+                              risk_score: float, 
+                              expected_profit: float) -> float:
+        """Berechnet die Qualität eines Signals (0-10)"""
         try:
             # Grundlegende Trend-Bewertung
-            trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
+            trend = trend_analysis.get('trend', 'neutral')
+            trend_base = 8 if trend == 'aufwärts' else 7 if trend == 'abwärts' else 5
 
             # Trendstärke-Bewertung - Erhöhte Sensitivität
-            strength_score = min(trend_analysis['stärke'] * 40, 10)  # Erhöht von 30 auf 40
+            strength = trend_analysis.get('stärke', 0)
+            strength_score = min(strength * 40, 10)  # Erhöht von 30 auf 40
 
-            # Profit-Bewertung - Angepasste Progressive Skala
-            if expected_profit <= 0.5:  # Reduziert von 1.0 auf 0.5
-                profit_score = expected_profit * 10  # Erhöht von 5 auf 10
-            elif expected_profit <= 1.0:  # Reduziert von 2.0 auf 1.0
-                profit_score = 5 + (expected_profit - 0.5) * 6  # Angepasste Berechnung
+            # Profit-Bewertung - Progressive Skala
+            if expected_profit <= 0.5:
+                profit_score = expected_profit * 10
+            elif expected_profit <= 1.0:
+                profit_score = 5 + (expected_profit - 0.5) * 6
             else:
-                profit_score = 8 + (min(expected_profit - 1.0, 2.0))
+                profit_score = 8 + min(expected_profit - 1.0, 2.0)
 
             # Gewichtete Summe mit angepassten Gewichten
             weights = (0.3, 0.4, 0.3)  # Mehr Gewicht auf Trendstärke

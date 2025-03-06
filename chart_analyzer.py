@@ -38,18 +38,15 @@ class ChartAnalyzer:
             logger.info(f"Neue Marktdaten empfangen - Preis: {price:.2f} USDC, Volumen: {volume:.2f}")
 
             # Erstelle OHLC Daten für Candlestick Chart
-            new_data = pd.DataFrame([{
-                'timestamp': current_time,
-                'Open': price,
-                'High': price * 1.002,  # Erhöhte Schwankung für bessere Visualisierung
-                'Low': price * 0.998,
-                'Close': price,
-                'Volume': volume
-            }])
+            new_data = pd.DataFrame({
+                'Open': [price],
+                'High': [price * 1.002],  # Erhöhte Schwankung für bessere Visualisierung
+                'Low': [price * 0.998],
+                'Close': [price],
+                'Volume': [volume]
+            }, index=[current_time])  # Setze den Index direkt beim Erstellen
 
-            # Setze den Index für mplfinance
-            new_data.set_index('timestamp', inplace=True)
-            logger.debug("Neue Daten vorbereitet")
+            logger.debug(f"Neue Daten erstellt:\n{new_data}")
 
             if self.data.empty:
                 self.data = new_data
@@ -66,8 +63,8 @@ class ChartAnalyzer:
             cutoff_time = current_time - timedelta(minutes=30)
             self.data = self.data[self.data.index > cutoff_time]
 
-            self.last_update = current_time
             logger.info(f"Preisdaten erfolgreich aktualisiert - {len(self.data)} Datenpunkte")
+            logger.debug(f"Aktualisierte Daten:\n{self.data}")
 
         except Exception as e:
             logger.error(f"Fehler beim Aktualisieren der Preisdaten: {e}")
@@ -81,11 +78,20 @@ class ChartAnalyzer:
                 logger.error("Keine Daten für Chart-Erstellung verfügbar")
                 return None
 
-            # Bereite Daten für mplfinance vor
-            df = self.data.copy()
-            logger.info(f"Daten für Chart vorbereitet, Zeilen: {len(df)}")
+            # Validiere Datenformat
+            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            if not all(col in self.data.columns for col in required_columns):
+                logger.error(f"Fehlende Spalten in den Daten. Verfügbar: {self.data.columns.tolist()}")
+                return None
 
-            # Definiere Plot-Style
+            # Überprüfe Index-Format
+            if not isinstance(self.data.index, pd.DatetimeIndex):
+                logger.error(f"Falsches Index-Format: {type(self.data.index)}")
+                return None
+
+            logger.debug(f"Chart-Daten vorm Plot:\n{self.data}")
+
+            # Plot Style
             mc = mpf.make_marketcolors(
                 up='#00ff00',      # Hellgrün für steigende Kerzen
                 down='#ff0000',    # Hellrot für fallende Kerzen
@@ -101,22 +107,21 @@ class ChartAnalyzer:
                 facecolor='#2d2d2d',
                 edgecolor='#444444'
             )
-            logger.info("Plot-Style definiert")
 
             try:
                 # Plot erstellen
                 fig, axlist = mpf.plot(
-                    df,
+                    self.data,
                     type='candle',
                     volume=True,
                     style=s,
-                    figsize=(12, 8),  # Größerer Chart
+                    figsize=(12, 8),
                     title='\nSOL/USDC Preisprognose',
                     returnfig=True
                 )
                 logger.info("Grundlegender Chart erstellt")
 
-                # Füge Entry, Target und Stop Loss Marker hinzu
+                # Füge Entry, Target und Stop Loss Linien hinzu
                 ax = axlist[0]
                 ax.axhline(y=entry_price, color='lime', linestyle='--', label='Entry')
                 ax.axhline(y=target_price, color='cyan', linestyle='--', label='Target')
@@ -124,9 +129,9 @@ class ChartAnalyzer:
                 ax.legend()
                 logger.info("Preislinien hinzugefügt")
 
-                # Speichere Chart in BytesIO
+                # Speichere Chart als PNG
                 img_bio = BytesIO()
-                fig.savefig(img_bio, format='png', dpi=100, bbox_inches='tight', 
+                fig.savefig(img_bio, format='png', dpi=100, bbox_inches='tight',
                            facecolor='#1a1a1a', edgecolor='none')
                 img_bio.seek(0)
                 plt.close(fig)
