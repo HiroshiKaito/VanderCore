@@ -24,6 +24,7 @@ class SentimentAnalyzer:
         # Retry Konfiguration
         self.max_retries = 3
         self.retry_delay = 2  # Sekunden
+        self.timeout = 15  # Sekunden
 
     async def analyze_market_sentiment(self) -> dict:
         """Analysiert die Marktstimmung aus verschiedenen Quellen"""
@@ -34,27 +35,31 @@ class SentimentAnalyzer:
                 'timestamp': datetime.now().isoformat()
             }
 
-            # CoinGecko Sentiment
-            coingecko_data = await self._fetch_coingecko_data()
-            if coingecko_data:
-                sentiment_data['sources']['coingecko'] = self._analyze_coingecko_sentiment(coingecko_data)
+            # Parallele API-Aufrufe
+            tasks = [
+                self._fetch_coingecko_data(),
+                self._fetch_social_data(),
+                self._fetch_dex_data()
+            ]
 
-            # Social Media Sentiment (Nitter/Twitter)
-            social_data = await self._fetch_social_data()
-            if social_data:
-                sentiment_data['sources']['social'] = self._analyze_social_sentiment(social_data)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # DEX Screener Marktdaten
-            dex_data = await self._fetch_dex_data()
-            if dex_data:
-                sentiment_data['sources']['dex'] = self._analyze_dex_sentiment(dex_data)
+            # Verarbeite die Ergebnisse
+            if isinstance(results[0], dict):
+                sentiment_data['sources']['coingecko'] = self._analyze_coingecko_sentiment(results[0])
+
+            if isinstance(results[1], str):
+                sentiment_data['sources']['social'] = self._analyze_social_sentiment(results[1])
+
+            if isinstance(results[2], dict):
+                sentiment_data['sources']['dex'] = self._analyze_dex_sentiment(results[2])
 
             # Berechne Gesamtscore mit Gewichtung
             scores = []
             weights = {'coingecko': 0.4, 'social': 0.3, 'dex': 0.3}
 
             for source, data in sentiment_data['sources'].items():
-                if data['confidence'] > 0:
+                if isinstance(data, dict) and data.get('confidence', 0) > 0:
                     scores.append(data['score'] * weights.get(source, 0.3))
 
             if scores:
@@ -70,123 +75,122 @@ class SentimentAnalyzer:
             logger.error(f"Fehler bei der Sentiment-Analyse: {e}")
             return {'overall_score': 0.5, 'sources': {}, 'error': str(e)}
 
-    async def _fetch_coingecko_data(self) -> Dict[str, Any]:
-        """Holt Solana-Daten von CoinGecko mit Retry-Mechanismus"""
+    async def _fetch_with_retry(self, url: str, params: Dict = None) -> Optional[requests.Response]:
+        """Generische Fetch-Funktion mit Retry-Mechanismus"""
         for attempt in range(self.max_retries):
             try:
-                logger.debug("Versuche CoinGecko API Abruf")
                 response = requests.get(
-                    f"{self.coingecko_api}/simple/price",
-                    params={
-                        'ids': 'solana',
-                        'vs_currencies': 'usd',
-                        'include_24hr_vol': True,
-                        'include_24hr_change': True,
-                        'include_last_updated_at': True
-                    },
+                    url,
+                    params=params,
                     headers=self.headers,
-                    timeout=10
+                    timeout=self.timeout
                 )
 
                 if response.status_code == 200:
-                    data = response.json()
-                    if 'solana' in data:
-                        logger.info("CoinGecko Daten erfolgreich abgerufen")
-                        return data
-                    logger.warning("Unerwartetes CoinGecko Datenformat")
-                    return {}
+                    return response
 
                 if response.status_code == 429:  # Rate Limit
                     wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(f"CoinGecko Rate Limit - Warte {wait_time}s")
+                    logger.warning(f"Rate Limit erreicht - Warte {wait_time}s")
                     await asyncio.sleep(wait_time)
                     continue
 
-                logger.warning(f"CoinGecko API Fehler: {response.status_code}")
-                return {}
-
-            except Exception as e:
-                logger.error(f"Fehler beim Abrufen der CoinGecko-Daten: {e}")
+                logger.warning(f"API Fehler: {response.status_code} für URL: {url}")
                 if attempt < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    await asyncio.sleep(self.retry_delay)
                     continue
-                return {}
 
-        return {}
+                return None
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request Fehler für {url}: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                return None
+
+        return None
+
+    async def _fetch_coingecko_data(self) -> Dict[str, Any]:
+        """Holt Solana-Daten von CoinGecko mit Retry-Mechanismus"""
+        try:
+            response = await self._fetch_with_retry(
+                f"{self.coingecko_api}/simple/price",
+                params={
+                    'ids': 'solana',
+                    'vs_currencies': 'usd',
+                    'include_24hr_vol': True,
+                    'include_24hr_change': True,
+                    'include_last_updated_at': True
+                }
+            )
+
+            if response:
+                data = response.json()
+                if 'solana' in data:
+                    logger.info("CoinGecko Daten erfolgreich abgerufen")
+                    return data
+                logger.warning("Unerwartetes CoinGecko Datenformat")
+
+            return {}
+
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen der CoinGecko-Daten: {e}")
+            return {}
 
     async def _fetch_social_data(self) -> str:
         """Holt Social Media Daten über Nitter"""
-        for attempt in range(self.max_retries):
-            try:
-                params = {
+        try:
+            response = await self._fetch_with_retry(
+                self.nitter_api,
+                params={
                     'f': 'tweets',
                     'q': 'solana language:de OR language:en',
                     'since': '24h'
                 }
-                response = requests.get(
-                    self.nitter_api,
-                    params=params,
-                    headers=self.headers,
-                    timeout=15
-                )
+            )
 
-                if response.status_code == 200:
-                    logger.info("Social Media Daten erfolgreich abgerufen")
-                    return response.text
+            if response:
+                logger.info("Social Media Daten erfolgreich abgerufen")
+                return response.text
 
-                if response.status_code == 429:  # Rate Limit
-                    wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(f"Nitter Rate Limit - Warte {wait_time}s")
-                    await asyncio.sleep(wait_time)
-                    continue
+            return ""
 
-                logger.warning(f"Nitter API Fehler: {response.status_code}")
-                return ""
-
-            except Exception as e:
-                logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
-                    continue
-                return ""
-
-        return ""
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
+            return ""
 
     async def _fetch_dex_data(self) -> Dict[str, Any]:
         """Holt DEX-Daten für Solana mit Retry-Mechanismus"""
-        for attempt in range(self.max_retries):
-            try:
-                response = requests.get(
-                    f"{self.dex_screener_api}/pairs/solana",
-                    headers=self.headers,
-                    timeout=15
-                )
+        try:
+            # Versuche zuerst die Token-spezifische API
+            response = await self._fetch_with_retry(
+                f"{self.dex_screener_api}/pairs/solana/So11111111111111111111111111111111111111112"
+            )
 
-                if response.status_code == 200:
-                    data = response.json()
-                    if 'pairs' in data:
-                        logger.info("DEX Daten erfolgreich abgerufen")
-                        return data
-                    logger.warning("Unerwartetes DEX Screener Datenformat")
-                    return {}
+            if response:
+                data = response.json()
+                if 'pairs' in data:
+                    logger.info("DEX Daten erfolgreich abgerufen")
+                    return data
 
-                if response.status_code == 429:  # Rate Limit
-                    wait_time = self.retry_delay * (2 ** attempt)
-                    logger.warning(f"DEX Screener Rate Limit - Warte {wait_time}s")
-                    await asyncio.sleep(wait_time)
-                    continue
+            # Fallback auf die allgemeine Pairs API
+            response = await self._fetch_with_retry(
+                f"{self.dex_screener_api}/pairs/solana"
+            )
 
-                logger.warning(f"DEX Screener API Fehler: {response.status_code}")
-                return {}
+            if response:
+                data = response.json()
+                if 'pairs' in data:
+                    logger.info("DEX Daten (Fallback) erfolgreich abgerufen")
+                    return data
+                logger.warning("Unerwartetes DEX Screener Datenformat")
 
-            except Exception as e:
-                logger.error(f"Fehler beim Abrufen der DEX-Daten: {e}")
-                if attempt < self.max_retries - 1:
-                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
-                    continue
-                return {}
+            return {}
 
-        return {}
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen der DEX-Daten: {e}")
+            return {}
 
     def _analyze_coingecko_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert CoinGecko Daten für Sentiment"""
