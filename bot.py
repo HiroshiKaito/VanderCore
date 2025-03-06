@@ -46,6 +46,7 @@ def home():
 def run_flask():
     """Startet den Flask-Server im Hintergrund"""
     try:
+        logger.info("Starte Flask-Server...")
         app.run(host='0.0.0.0', port=5000)
     except Exception as e:
         logger.error(f"Fehler beim Starten des Flask-Servers: {e}")
@@ -54,26 +55,40 @@ def run_flask():
 class SolanaWalletBot:
     def __init__(self):
         """Initialisiert den Bot mit Konfiguration"""
-        logger.info("Initialisiere Bot...")
-        self.config = Config()
+        try:
+            logger.info("Initialisiere Bot...")
+            self.config = Config()
 
-        # Setze Timezone für APScheduler
-        self.timezone = pytz.timezone('UTC')
+            # Validiere Token
+            if not self.config.TELEGRAM_TOKEN:
+                raise ValueError("TELEGRAM_TOKEN nicht gefunden!")
 
-        # Bot-Status
-        self.maintenance_mode = False
-        self.update_in_progress = False
-        self.active_users = set()
-        self.pending_operations = {}
+            # Setze Timezone für APScheduler
+            self.timezone = pytz.timezone('UTC')
 
-        # Komponenten
-        self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
-        self.updater = None
-        self.dex_connector = DexConnector()
-        self.signal_processor = SignalProcessor()
-        self.signal_generator = None
+            # Bot-Status
+            self.maintenance_mode = False
+            self.update_in_progress = False
+            self.active_users = set()
+            self.pending_operations = {}
 
-        logger.info("Bot erfolgreich initialisiert")
+            # Komponenten
+            logger.info("Initialisiere Wallet Manager...")
+            self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
+            self.updater = None
+
+            logger.info("Initialisiere DEX Connector...")
+            self.dex_connector = DexConnector()
+
+            logger.info("Initialisiere Signal Processor...")
+            self.signal_processor = SignalProcessor()
+            self.signal_generator = None
+
+            logger.info("Bot erfolgreich initialisiert")
+
+        except Exception as e:
+            logger.error(f"Fehler bei Bot-Initialisierung: {e}")
+            raise
 
     def enter_maintenance_mode(self, update: Update, context: CallbackContext):
         """Aktiviert den Wartungsmodus"""
@@ -763,6 +778,9 @@ class SolanaWalletBot:
             dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
             dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
 
+            # Füge Message Handler für Text-Nachrichten hinzu
+            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_text))
+
             # Füge Callback Query Handler hinzu
             dp.add_handler(CallbackQueryHandler(self.button_handler))
 
@@ -770,11 +788,16 @@ class SolanaWalletBot:
             dp.add_error_handler(self.error_handler)
 
             # Starte Flask im Hintergrund
-            threading.Thread(target=run_flask, daemon=True).start()
+            logger.info("Starte Flask-Server im Hintergrund...")
+            flask_thread = threading.Thread(target=run_flask, daemon=True)
+            flask_thread.start()
+
+            # Warte kurz, damit Flask starten kann
+            time.sleep(2)
             logger.info("Flask-Server gestartet")
 
             # Starte den Bot
-            logger.info("Starte Polling...")
+            logger.info("Starte Telegram Bot Polling...")
             self.updater.start_polling(drop_pending_updates=True)
             logger.info("Bot erfolgreich gestartet!")
 
@@ -787,6 +810,7 @@ class SolanaWalletBot:
 
 if __name__ == "__main__":
     try:
+        logging.info("Starte Solana Trading Bot...")
         bot = SolanaWalletBot()
         bot.run()
     except Exception as e:
