@@ -125,56 +125,60 @@ class AutomatedSignalGenerator:
             logger.info(f"Support/Resistance - Support: {support_resistance.get('support', 0):.2f}, "
                        f"Resistance: {support_resistance.get('resistance', 0):.2f}")
 
-            # Erstelle Signal basierend auf Analyse
-            signal = self._create_signal_from_analysis(
-                current_price, trend_analysis, support_resistance
-            )
+            # Reduzierte Mindest-Trendstärke für mehr Signale
+            if trend_analysis.get('stärke', 0) >= 0.01:  # Reduziert von 0.03 auf 0.01
+                # Erstelle Signal basierend auf Analyse
+                signal = self._create_signal_from_analysis(
+                    current_price, trend_analysis, support_resistance
+                )
 
-            if signal:
-                # Verarbeite und sende Signal
-                processed_signal = self.signal_processor.process_signal(signal)
-                if processed_signal:
-                    logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
-                    if processed_signal['signal_quality'] >= 3:  # Reduziert von 4 auf 3
-                        logger.info(f"Signal Details:"
-                                  f"\n - Richtung: {processed_signal['direction']}"
-                                  f"\n - Entry: {processed_signal['entry']:.2f}"
-                                  f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
-                                  f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
-                                  f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
+                if signal:
+                    # Verarbeite und sende Signal
+                    processed_signal = self.signal_processor.process_signal(signal)
+                    if processed_signal:
+                        logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
+                        if processed_signal['signal_quality'] >= 2:  # Reduziert von 3 auf 2
+                            logger.info(f"Signal Details:"
+                                      f"\n - Richtung: {processed_signal['direction']}"
+                                      f"\n - Entry: {processed_signal['entry']:.2f}"
+                                      f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
+                                      f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
+                                      f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
 
-                        # Versuche Chart zu generieren bevor das Signal gesendet wird
-                        chart_image = self.chart_analyzer.create_prediction_chart(
-                            entry_price=processed_signal['entry'],
-                            target_price=processed_signal['take_profit'],
-                            stop_loss=processed_signal['stop_loss']
-                        )
+                            # Versuche Chart zu generieren bevor das Signal gesendet wird
+                            chart_image = self.chart_analyzer.create_prediction_chart(
+                                entry_price=processed_signal['entry'],
+                                target_price=processed_signal['take_profit'],
+                                stop_loss=processed_signal['stop_loss']
+                            )
 
-                        if chart_image:
-                            logger.info("Chart erfolgreich generiert")
+                            if chart_image:
+                                logger.info("Chart erfolgreich generiert")
+                            else:
+                                logger.error("Chart konnte nicht generiert werden")
+
+                            self._notify_users_about_signal(processed_signal)
+                            self.total_signals_generated += 1
+
+                            # Aktualisiere Signal-Statistiken
+                            current_time = datetime.now(pytz.UTC)
+                            if self.last_signal_time:
+                                interval = (current_time - self.last_signal_time).total_seconds() / 60
+                                self.signal_intervals.append(interval)
+                                avg_interval = sum(self.signal_intervals) / len(self.signal_intervals)
+                                logger.info(f"📊 Signal-Statistiken:"
+                                          f"\n - Durchschnittliches Intervall: {avg_interval:.1f} Minuten"
+                                          f"\n - Gesamtzahl Signale: {self.total_signals_generated}")
+
+                            self.last_signal_time = current_time
                         else:
-                            logger.error("Chart konnte nicht generiert werden")
-
-                        self._notify_users_about_signal(processed_signal)
-                        self.total_signals_generated += 1
-
-                        # Aktualisiere Signal-Statistiken
-                        current_time = datetime.now(pytz.UTC)
-                        if self.last_signal_time:
-                            interval = (current_time - self.last_signal_time).total_seconds() / 60
-                            self.signal_intervals.append(interval)
-                            avg_interval = sum(self.signal_intervals) / len(self.signal_intervals)
-                            logger.info(f"📊 Signal-Statistiken:"
-                                      f"\n - Durchschnittliches Intervall: {avg_interval:.1f} Minuten"
-                                      f"\n - Gesamtzahl Signale: {self.total_signals_generated}")
-
-                        self.last_signal_time = current_time
+                            logger.info(f"Signal ignoriert - Qualität zu niedrig: {processed_signal['signal_quality']}/10")
                     else:
-                        logger.info(f"Signal ignoriert - Qualität zu niedrig: {processed_signal['signal_quality']}/10")
+                        logger.info("Signal konnte nicht verarbeitet werden")
                 else:
-                    logger.info("Signal konnte nicht verarbeitet werden")
+                    logger.info("Kein Signal basierend auf aktueller Analyse")
             else:
-                logger.info("Kein Signal basierend auf aktueller Analyse")
+                logger.info(f"Kein Signal - Trend zu schwach: {trend_analysis.get('trend')}, Stärke: {trend_analysis.get('stärke', 0)}%")
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
@@ -257,8 +261,8 @@ class AutomatedSignalGenerator:
             return None
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any],
-                               strength: float,
-                               expected_profit: float) -> float:
+                                 strength: float,
+                                 expected_profit: float) -> float:
         """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
             # Grundlegende Trend-Bewertung
@@ -298,7 +302,8 @@ class AutomatedSignalGenerator:
     def _notify_users_about_signal(self, signal: Dict[str, Any]):
         """Benachrichtigt Benutzer über neue Trading-Signale"""
         try:
-            logger.info(f"Starte Benachrichtigung über neues Signal. Aktive Nutzer: {len(self.bot.active_users)}")
+            logger.info(f"Starte Benachrichtigung über neues Signal...")
+            logger.info(f"Aktive Nutzer: {len(self.bot.active_users)}")
             logger.debug(f"Aktive Nutzer IDs: {self.bot.active_users}")
 
             if not self.bot.active_users:
@@ -307,18 +312,6 @@ class AutomatedSignalGenerator:
 
             # Hole das aktuelle Wallet-Guthaben
             balance = self.bot.wallet_manager.get_balance()
-
-            # Erstelle Prediction Chart
-            logger.info("Erstelle Chart für Trading Signal...")
-            chart_image = None
-            try:
-                chart_image = self.chart_analyzer.create_prediction_chart(
-                    entry_price=signal['entry'],
-                    target_price=signal['take_profit'],
-                    stop_loss=signal['stop_loss']
-                )
-            except Exception as chart_error:
-                logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
 
             signal_message = (
                 f"⚡ SCHNELLES TRADING SIGNAL!\n\n"
@@ -343,30 +336,22 @@ class AutomatedSignalGenerator:
                 ]
             ]
 
-            # Sende eine einzelne Nachricht mit Chart und Signal-Details
+            # Sende eine einzelne Nachricht mit Signal-Details
+            success_count = 0
             for user_id in self.bot.active_users:
                 try:
                     logger.info(f"Versuche Signal an User {user_id} zu senden...")
-                    if chart_image:
-                        # Sende eine einzelne Nachricht mit Chart und Text
-                        self.bot.updater.bot.send_photo(
-                            chat_id=user_id,
-                            photo=chart_image,
-                            caption=signal_message,
-                            reply_markup={"inline_keyboard": keyboard}
-                        )
-                        logger.info(f"Trading Signal mit Chart erfolgreich an User {user_id} gesendet")
-                    else:
-                        # Fallback: Sende nur Text wenn kein Chart verfügbar
-                        self.bot.updater.bot.send_message(
-                            chat_id=user_id,
-                            text=signal_message + "\n\n⚠️ Chart konnte nicht generiert werden.",
-                            reply_markup={"inline_keyboard": keyboard}
-                        )
-                        logger.warning(f"Trading Signal ohne Chart an User {user_id} gesendet")
-
+                    self.bot.updater.bot.send_message(
+                        chat_id=user_id,
+                        text=signal_message,
+                        reply_markup={"inline_keyboard": keyboard}
+                    )
+                    success_count += 1
+                    logger.info(f"Trading Signal erfolgreich an User {user_id} gesendet")
                 except Exception as send_error:
                     logger.error(f"Fehler beim Senden der Nachricht an User {user_id}: {send_error}")
+
+            logger.info(f"Signal-Benachrichtigung abgeschlossen. Erfolgreiche Sendungen: {success_count}")
 
         except Exception as e:
             logger.error(f"Fehler beim Senden der Signal-Benachrichtigung: {e}")

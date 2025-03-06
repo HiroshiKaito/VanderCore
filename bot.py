@@ -331,15 +331,15 @@ class SolanaWalletBot:
 
     def start(self, update: Update, context: CallbackContext) -> None:
         """Start-Befehl Handler"""
-        logger.debug("Start-Befehl empfangen")
         user_id = update.effective_user.id
         logger.info(f"Start-Befehl von User {user_id}")
 
         try:
             # Füge Benutzer zu aktiven Nutzern hinzu
             self.active_users.add(user_id)
-            logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
+            logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt. Aktive Nutzer: {self.active_users}")
 
+            # Sende Willkommensnachricht
             logger.debug(f"Sende Start-Nachricht an User {user_id}")
             update.message.reply_text(
                 "👋 Hey! Ich bin Dexter - der beste Solana Trading Bot auf dem Markt!\n\n"
@@ -361,10 +361,14 @@ class SolanaWalletBot:
             )
             logger.debug("Start-Nachricht erfolgreich gesendet")
 
-            # Aktiviere automatische Signal-Generierung für den neuen Benutzer
+            # Aktiviere automatische Signal-Generierung
             if self.signal_generator:
                 logger.info(f"Aktiviere Signal-Generierung für User {user_id}")
-                self.signal_generator.add_user(user_id)
+                self.signal_generator.start()
+            else:
+                logger.warning("Signal Generator nicht initialisiert!")
+
+            logger.info(f"Start-Befehl für User {user_id} erfolgreich verarbeitet")
 
         except Exception as e:
             logger.error(f"Fehler beim Senden der Start-Nachricht: {e}")
@@ -779,7 +783,7 @@ class SolanaWalletBot:
 
             for handler in handlers:
                 dp.add_handler(handler)
-                logger.debug(f"Handler registriert: {handler.__class__.__name__}")
+                logger.debug(f"Handlerregistriert: {handler.__class__.__name__}")
 
             # Füge Error Handler hinzu
             dp.add_error_handler(self.error_handler)
