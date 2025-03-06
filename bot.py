@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import threading
 from datetime import datetime
 from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -26,34 +27,89 @@ app = Flask(__name__)
 # Globale Bot-Variable
 telegram_bot = None
 
+def run_flask():
+    """Startet den Flask-Server im Hintergrund"""
+    try:
+        logger.info("Starte Flask-Server auf Port 5000...")
+        app.run(
+            host='0.0.0.0',
+            port=5000,
+            use_reloader=False,
+            debug=False
+        )
+    except Exception as e:
+        logger.error(f"Fehler beim Starten des Flask-Servers: {e}")
+
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "running",
+        "bot_active": bool(telegram_bot and telegram_bot.is_running),
+        "timestamp": datetime.now().isoformat()
+    })
+
+@app.route('/health')
+def health():
+    try:
+        if telegram_bot and telegram_bot.is_running:
+            return jsonify({
+                "status": "healthy",
+                "bot_running": True,
+                "active_users": len(telegram_bot.active_users),
+                "timestamp": datetime.now().isoformat()
+            })
+        return jsonify({
+            "status": "starting",
+            "bot_running": False,
+            "active_users": 0
+        })
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 class SolanaWalletBot:
     def __init__(self):
         """Initialisiert den Bot mit Konfiguration"""
         logger.info("Initialisiere Bot...")
-        self.config = Config()
-        self.active_users = set()
-        self.is_running = False
-        self.updater = None
-
-        # Komponenten
-        self.dex_connector = DexConnector()
-        self.signal_processor = SignalProcessor()
-        self.signal_generator = None
-
-        # Lade gespeicherte User-IDs
         try:
+            self.config = Config()
+
+            # Überprüfe kritische Konfiguration
+            if not self.config.TELEGRAM_TOKEN:
+                raise ValueError("TELEGRAM_TOKEN nicht gesetzt")
+            if not self.config.ADMIN_USER_ID:
+                raise ValueError("ADMIN_USER_ID nicht gesetzt")
+
+            logger.info("Konfiguration erfolgreich geladen")
+
+            self.active_users = set()
+            self.is_running = False
+            self.updater = None
+
+            # Komponenten
+            self.dex_connector = DexConnector()
+            self.signal_processor = SignalProcessor()
+            self.signal_generator = None
+
+            # Lade gespeicherte User-IDs
             if os.path.exists('active_users.json'):
                 with open('active_users.json', 'r') as f:
                     saved_users = json.load(f)
                     self.active_users = set(map(str, saved_users))
                     logger.info(f"Aktive Nutzer geladen: {self.active_users}")
-        except Exception as e:
-            logger.error(f"Fehler beim Laden der aktiven Nutzer: {e}")
 
-    def start(self):
-        """Startet den Bot"""
+            logger.info("Bot erfolgreich initialisiert")
+
+        except Exception as e:
+            logger.error(f"Fehler bei Bot-Initialisierung: {e}")
+            raise
+
+    def run(self):
+        """Startet den Bot im Hauptthread"""
         try:
-            logger.info("Starte Bot...")
+            logger.info("Starte Telegram Bot...")
+
+            # Initialisiere Updater
             self.updater = Updater(self.config.TELEGRAM_TOKEN, use_context=True)
             dp = self.updater.dispatcher
 
@@ -70,11 +126,7 @@ class SolanaWalletBot:
                 dp.add_handler(handler)
                 logger.info(f"Handler registriert: {handler.__class__.__name__}")
 
-            # Starte Polling
-            self.updater.start_polling(drop_pending_updates=True)
-            logger.info("Telegram Bot erfolgreich gestartet!")
-
-            # Initialisiere Signal Generator
+            # Starte Signal Generator
             self.signal_generator = AutomatedSignalGenerator(
                 self.dex_connector,
                 self.signal_processor,
@@ -83,13 +135,29 @@ class SolanaWalletBot:
             self.signal_generator.start()
             logger.info("Signal Generator erfolgreich gestartet")
 
+            # Starte Polling (im Hauptthread)
             self.is_running = True
-            return True
+            logger.info("Bot ist jetzt aktiv und empfangsbereit")
+
+            # Sende Startmeldung an Admin
+            try:
+                self.updater.bot.send_message(
+                    chat_id=self.config.ADMIN_USER_ID,
+                    text="🚀 Bot wurde erfolgreich gestartet!"
+                )
+                logger.info("Admin-Benachrichtigung gesendet")
+            except Exception as e:
+                logger.error(f"Fehler beim Senden der Admin-Nachricht: {e}")
+
+            # Blockiere den Hauptthread mit dem Bot
+            self.updater.idle()
 
         except Exception as e:
-            logger.error(f"Fehler beim Starten des Bots: {e}")
+            logger.error(f"Fehler beim Starten des Telegram Bots: {e}", exc_info=True)
             self.is_running = False
-            return False
+            if self.signal_generator:
+                self.signal_generator.stop()
+            raise
 
     def stop(self):
         """Stoppt den Bot"""
@@ -131,7 +199,7 @@ class SolanaWalletBot:
         except Exception as e:
             logger.error(f"Fehler beim Start-Befehl: {e}")
             update.message.reply_text(
-                "❌ Es ist ein Fehler aufgetreten. Bitte versuche es später erneut."
+                "❌ Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
             )
 
     def help_command(self, update: Update, context: CallbackContext):
@@ -152,10 +220,8 @@ class SolanaWalletBot:
             user_id = update.effective_user.id
             logger.info(f"Test-Signal-Befehl empfangen von User {user_id}")
 
-            # Bestätige den Empfang des Befehls
             update.message.reply_text("🔄 Generiere Test-Signal...")
 
-            # Erstelle Test-Signal
             test_signal = {
                 'pair': 'SOL/USD',
                 'direction': 'long',
@@ -170,7 +236,6 @@ class SolanaWalletBot:
                 'trend_strength': 0.8,
             }
 
-            # Verarbeite das Signal
             processed_signal = self.signal_processor.process_signal(test_signal)
 
             if processed_signal:
@@ -228,76 +293,23 @@ class SolanaWalletBot:
         except Exception as e:
             logger.error(f"Fehler bei der Textverarbeitung: {e}")
 
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "running",
-        "bot_active": bool(telegram_bot and telegram_bot.is_running),
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.route('/health')
-def health():
-    try:
-        if telegram_bot and telegram_bot.is_running:
-            return jsonify({
-                "status": "healthy",
-                "bot_running": True,
-                "active_users": len(telegram_bot.active_users),
-                "timestamp": datetime.now().isoformat()
-            })
-        return jsonify({
-            "status": "starting",
-            "bot_running": False,
-            "active_users": 0
-        })
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-def check_environment():
-    """Überprüft die Umgebungsvariablen"""
-    try:
-        config = Config()
-        if not config.TELEGRAM_TOKEN:
-            logger.error("TELEGRAM_TOKEN nicht gesetzt")
-            return False
-        if not config.ADMIN_USER_ID:
-            logger.error("ADMIN_USER_ID nicht gesetzt")
-            return False
-        logger.info("Umgebungsvariablen erfolgreich geprüft")
-        return True
-    except Exception as e:
-        logger.error(f"Fehler beim Prüfen der Umgebungsvariablen: {e}")
-        return False
-
 def main():
     """Hauptfunktion zum Starten der Anwendung"""
     global telegram_bot
     try:
         logger.info("Starte Anwendung...")
 
-        # Prüfe Umgebungsvariablen
-        if not check_environment():
-            logger.error("Umgebungsvariablen nicht korrekt konfiguriert")
-            return
-
-        # Erstelle und starte Bot
+        # Erstelle Bot
         telegram_bot = SolanaWalletBot()
-        if not telegram_bot.start():
-            logger.error("Bot konnte nicht gestartet werden")
-            return
 
-        logger.info("Bot erfolgreich gestartet")
+        # Starte Flask-Server im Hintergrund
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.daemon = True
+        flask_thread.start()
+        logger.info("Flask-Server-Thread gestartet")
 
-        # Starte Flask-Server
-        logger.info("Starte Flask-Server auf Port 5000...")
-        app.run(
-            host='0.0.0.0',
-            port=5000,
-            use_reloader=False,
-            debug=False
-        )
+        # Starte Telegram Bot im Hauptthread
+        telegram_bot.run()
 
     except Exception as e:
         logger.error(f"Kritischer Fehler beim Starten: {e}", exc_info=True)
