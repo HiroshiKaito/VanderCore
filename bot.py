@@ -174,9 +174,11 @@ class SolanaWalletBot:
             user_id = str(update.effective_user.id)
             logger.info(f"Start-Befehl von User {user_id}")
 
+            # Füge Benutzer zu aktiven Nutzern hinzu
             self.active_users.add(user_id)
             logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
 
+            # Erstelle Willkommensnachricht
             welcome_message = (
                 "👋 Willkommen beim Solana Trading Bot!\n\n"
                 "🚀 Ich helfe dir beim Trading mit:\n"
@@ -186,8 +188,27 @@ class SolanaWalletBot:
                 "Nutze /hilfe um alle verfügbaren Befehle zu sehen."
             )
 
-            update.message.reply_text(welcome_message)
+            # Erstelle Keyboard für Willkommensnachricht
+            keyboard = [
+                [InlineKeyboardButton("🚀 Trading starten", callback_data="start_trading")],
+                [InlineKeyboardButton("❓ Hilfe anzeigen", callback_data="show_help")]
+            ]
+
+            # Sende Willkommensnachricht mit Buttons
+            update.message.reply_text(
+                welcome_message,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
             logger.info(f"Willkommensnachricht an User {user_id} gesendet")
+
+            # Speichere aktive Nutzer
+            try:
+                with open('active_users.json', 'w') as f:
+                    json.dump(list(self.active_users), f)
+                logger.info(f"Aktive Nutzer gespeichert: {self.active_users}")
+            except Exception as e:
+                logger.error(f"Fehler beim Speichern der aktiven Nutzer: {e}")
 
         except Exception as e:
             logger.error(f"Fehler beim Start-Befehl: {e}", exc_info=True)
@@ -273,16 +294,35 @@ class SolanaWalletBot:
         query = update.callback_query
         try:
             logger.info(f"Button-Klick von User {query.from_user.id}: {query.data}")
-            if query.data == "trade_signal_new":
+
+            if query.data == "start_trading":
+                query.answer("Trading wird vorbereitet...")
+                query.message.reply_text(
+                    "🎯 Nutze /test_signal um ein Trading-Signal zu generieren!"
+                )
+                logger.info(f"Trading-Start für User {query.from_user.id}")
+
+            elif query.data == "show_help":
+                query.answer("Zeige Hilfe...")
+                self.help_command(query.message, context)
+                logger.info(f"Hilfe angezeigt für User {query.from_user.id}")
+
+            elif query.data == "trade_signal_new":
                 query.answer("Signal wird verarbeitet...")
                 query.message.reply_text("✅ Trading Signal wird ausgeführt!")
                 logger.info(f"Trading Signal wird ausgeführt für User {query.from_user.id}")
+
             elif query.data == "ignore_signal":
                 query.answer("Signal ignoriert")
                 query.message.delete()
                 logger.info(f"Signal ignoriert von User {query.from_user.id}")
+
         except Exception as e:
             logger.error(f"Fehler beim Button-Handler: {e}", exc_info=True)
+            try:
+                query.answer("Ein Fehler ist aufgetreten")
+            except:
+                pass
 
     def handle_text(self, update: Update, context: CallbackContext):
         """Verarbeitet Text-Nachrichten"""
