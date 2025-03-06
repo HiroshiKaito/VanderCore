@@ -574,6 +574,8 @@ class SolanaWalletBot:
             self.enter_maintenance_mode(update, context)
         elif command == '/wartung_ende' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
             self.exit_maintenance_mode(update, context)
+        elif command == '/test_admin' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.test_admin_notification(update, context)
         else:
             self.handle_text(update, context)
 
@@ -595,6 +597,32 @@ class SolanaWalletBot:
                 logger.info(f"Admin-Benachrichtigung gesendet: {message}")
         except Exception as e:
             logger.error(f"Fehler beim Senden der Admin-Benachrichtigung: {e}")
+
+    def test_admin_notification(self, update: Update, context: CallbackContext):
+        """Sendet eine Test-Benachrichtigung an den Admin"""
+        if str(update.effective_user.id) != str(self.config.ADMIN_USER_ID):
+            update.message.reply_text("❌ Nur Administratoren können diese Aktion ausführen.")
+            return
+
+        try:
+            # Sende Test-Benachrichtigung
+            self.notify_admin(
+                "Dies ist eine Test-Benachrichtigung.\n"
+                "So sehen Admin-Benachrichtigungen aus!",
+                is_critical=False
+            )
+
+            # Sende auch eine kritische Test-Nachricht
+            self.notify_admin(
+                "Dies ist eine kritische Test-Benachrichtigung!",
+                is_critical=True
+            )
+
+            update.message.reply_text("✅ Test-Benachrichtigungen wurden gesendet!")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Senden der Test-Benachrichtigung: {e}")
+            update.message.reply_text("❌ Fehler beim Senden der Test-Benachrichtigung")
 
     def run(self):
         """Startet den Bot mit verbesserter Fehlertoleranz"""
@@ -622,6 +650,7 @@ class SolanaWalletBot:
             # Admin-Kommandos
             dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
             dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
+            dp.add_handler(CommandHandler("test_admin", self.test_admin_notification))
 
             # Callback und Message Handler
             dp.add_handler(CallbackQueryHandler(self.button_handler))
