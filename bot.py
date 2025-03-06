@@ -13,6 +13,8 @@ from datetime import datetime
 import json
 import os
 import time
+import threading
+from flask import Flask, jsonify
 from config import Config
 from wallet_manager import WalletManager
 from utils import format_amount, validate_amount, format_wallet_info
@@ -21,13 +23,18 @@ from dex_connector import DexConnector
 from automated_signal_generator import AutomatedSignalGenerator
 from apscheduler.schedulers.background import BackgroundScheduler
 
+# Flask App für Replit
+app = Flask(__name__)
 
-# Logging Setup mit detailliertem Format
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG
-)
-logger = logging.getLogger(__name__)
+@app.route('/')
+def home():
+    return jsonify({"status": "Bot is running", "timestamp": datetime.now().isoformat()})
+
+# Rest des Codes bleibt unverändert bis zur run()-Methode
+
+def run_flask():
+    """Startet den Flask-Server im Hintergrund"""
+    app.run(host='0.0.0.0', port=5000)
 
 class SolanaWalletBot:
     def __init__(self):
@@ -332,7 +339,6 @@ class SolanaWalletBot:
                 "🎯 Gewinnchancen maximieren\n\n"
                 "Verfügbare Befehle:\n"
                 "/wallet - Wallet-Verwaltung\n"
-                "/signal - Trading Signale anzeigen\n"
                 "/trades - Aktive Trades anzeigen\n"
                 "/hilfe - Weitere Hilfe anzeigen\n\n"
                 "Ready to trade? 🎬",
@@ -358,7 +364,6 @@ class SolanaWalletBot:
             "/senden - SOL senden\n"
             "/empfangen - Einzahlungsadresse anzeigen\n\n"
             "🔹 Trading Befehle:\n"
-            "/signal - Aktuelle Trading Signale anzeigen\n"
             "/trades - Aktuelle Trades anzeigen\n"
             "❓ Brauchen Sie Hilfe? Nutzen Sie /start um neu zu beginnen!"
         )
@@ -436,57 +441,6 @@ class SolanaWalletBot:
                 f"📥 Ihre Wallet-Adresse zum Empfangen von SOL:\n\n"
                 f"`{address}`",
                 parse_mode='Markdown'
-            )
-
-    def handle_signal_command(self, update: Update, context: CallbackContext) -> None:
-        """Handler für den /signal Befehl - zeigt aktuelle Trading Signale"""
-        try:
-            logger.info(f"Signal-Abfrage von User {update.effective_user.id}")
-            active_signals = self.signal_processor.get_active_signals()
-
-            if not active_signals:
-                update.message.reply_text(
-                    "🔍 Aktuell keine aktiven Trading-Signale verfügbar.\n"
-                    "Neue Signale werden automatisch analysiert und angezeigt.\n\n"
-                    "💡 Tipp: Aktiviere Benachrichtigungen für neue Signale mit /subscribe"
-                )
-                return
-
-            for idx, signal in enumerate(active_signals):
-                signal_message = (
-                    f"📊 Trading Signal #{idx + 1}\n\n"
-                    f"Pair: {signal['pair']}\n"
-                    f"Signal: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
-                    f"Einstieg: {signal['entry']:.2f} USDC\n"
-                    f"Stop Loss: {signal['stop_loss']:.2f} USDC\n"
-                    f"Take Profit: {signal['take_profit']:.2f} USDC\n\n"
-                    f"📈 Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
-                    f"✨ Signal-Qualität: {signal['signal_quality']}/10\n\n"
-                    f"Möchten Sie dieses Signal handeln?"
-                )
-
-                keyboard = [
-                    [
-                        InlineKeyboardButton("✅ Handeln", callback_data=f"trade_signal_{idx}"),
-                        InlineKeyboardButton("❌ Ignorieren", callback_data=f"ignore_signal_{idx}")
-                    ]
-                ]
-
-                try:
-                    update.message.reply_text(
-                        signal_message,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
-                    logger.info(f"Signal #{idx + 1} erfolgreich an User {update.effective_user.id} gesendet")
-                except Exception as e:
-                    logger.error(f"Fehler beim Senden des Signals #{idx + 1}: {e}")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Anzeigen der Signale: {e}")
-            update.message.reply_text(
-                "❌ Fehler beim Abrufen der Trading-Signale.\n"
-                "Bitte versuchen Sie es später erneut."
             )
 
     def handle_trades_command(self, update: Update, context: CallbackContext) -> None:
@@ -572,8 +526,9 @@ class SolanaWalletBot:
 
             elif query.data.startswith("ignore_signal_"):
                 signal_idx = int(query.data.split("_")[-1])
-                query.message.reply_text("Signal wurde ignoriert.")
-                logger.info(f"User {user_id} ignoriert Signal #{signal_idx}")
+                query.message.delete()
+                logger.info(f"Signal-Nachricht wurde auf Benutzeranfrage gelöscht")
+                return
 
             elif query.data == "create_wallet":
                 logger.info(f"Erstelle neue Solana-Wallet für User {user_id}")
@@ -627,9 +582,16 @@ class SolanaWalletBot:
                 logger.info(f"Signal-Suche für User {user_id} aktiviert")
 
             elif query.data == "ignore_signal":
+                query.message.delete()
+                logger.info(f"Signal-Nachricht wurde auf Benutzeranfrage gelöscht")
+                return
+
+            elif query.data == "trade_signal_new":
                 query.message.reply_text(
-                    "Signal wurde ignoriert. Sie erhalten weiterhin neue Signale."
+                    "✅ Signal wird ausgeführt...\n"
+                    "Sie erhalten eine Bestätigung, sobald der Trade platziert wurde."
                 )
+                logger.info(f"User {query.from_user.id} führt neues Signal aus")
 
         except Exception as e:
             logger.error(f"Fehler im Button Handler: {e}")
@@ -648,8 +610,6 @@ class SolanaWalletBot:
             self.send_command(update, context)
         elif command == '/empfangen':
             self.receive_command(update, context)
-        elif command == '/signal':
-            self.handle_signal_command(update, context)
         elif command == '/trades':
             self.handle_trades_command(update, context)
         elif command == '/wartung_start' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
@@ -684,7 +644,24 @@ class SolanaWalletBot:
             # Verarbeite das Signal
             processed_signal = self.signal_processor.process_signal(test_signal)
             if processed_signal:
-                update.message.reply_text("✅ Test-Signal erfolgreich generiert und verarbeitet!")
+                # Signal wurde erfolgreich verarbeitet, jetzt die Benachrichtigung senden
+                logger.info("Test-Signal erfolgreich verarbeitet, sende Benachrichtigung...")
+                if not self.signal_generator:
+                    logger.info("Initialisiere Signal Generator...")
+                    self.signal_generator = AutomatedSignalGenerator(
+                        self.dex_connector,
+                        self.signal_processor,
+                        self
+                    )
+                    self.signal_generator.start()
+                    logger.info("Signal Generator erfolgreich gestartet")
+
+                # Füge den aktuellen Benutzer zu aktiven Nutzern hinzu
+                self.active_users.add(update.effective_user.id)
+                logger.info(f"User {update.effective_user.id} zu aktiven Nutzern hinzugefügt")
+
+                self.signal_generator._notify_users_about_signal(processed_signal)
+                update.message.reply_text("✅ Test-Signal erfolgreich generiert und versendet!")
             else:
                 update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
         except Exception as e:
@@ -760,7 +737,6 @@ class SolanaWalletBot:
             dp.add_handler(CommandHandler("wallet", self.wallet_command))
             dp.add_handler(CommandHandler("senden", self.send_command))
             dp.add_handler(CommandHandler("empfangen", self.receive_command))
-            dp.add_handler(CommandHandler("signal", self.handle_signal_command))
             dp.add_handler(CommandHandler("trades", self.handle_trades_command))
 
             # Admin-Kommandos
@@ -787,6 +763,12 @@ class SolanaWalletBot:
             scheduler.add_job(self._send_heartbeat, 'interval', minutes=5)
             scheduler.start()
 
+            # Starte Flask-Server im Hintergrund
+            flask_thread = threading.Thread(target=run_flask)
+            flask_thread.daemon = True
+            flask_thread.start()
+            logger.info("Flask-Server gestartet auf Port 5000")
+
             # Starte Polling mit Retry-Mechanismus
             retry_count = 0
             max_retries = 3
@@ -798,15 +780,13 @@ class SolanaWalletBot:
                     break
                 except Exception as e:
                     retry_count += 1
-                    logger.error(f"Start-Versuch {retry_count} fehlgeschlagen: {e}")
-                    if retry_count < max_retries:
-                        time.sleep(10 * retry_count)
-                    else:
+                    logger.error(f"Fehler beim Starten des Bots (Versuch {retry_count}): {e}")
+                    if retry_count == max_retries:
                         raise
+                    time.sleep(5 * retry_count)
 
         except Exception as e:
-            logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
-            self.graceful_shutdown()
+            logger.error(f"Kritischer Fehler beim Bot-Start: {e}")
             raise
 
 if __name__ == "__main__":

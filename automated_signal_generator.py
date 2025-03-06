@@ -123,7 +123,7 @@ class AutomatedSignalGenerator:
                 processed_signal = self.signal_processor.process_signal(signal)
                 if processed_signal:
                     logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
-                    if processed_signal['signal_quality'] >= 4:  # Reduziert von 5 auf 4
+                    if processed_signal['signal_quality'] >= 3:  # Reduziert von 4 auf 3
                         logger.info(f"Signal Details:"
                                   f"\n - Richtung: {processed_signal['direction']}"
                                   f"\n - Entry: {processed_signal['entry']:.2f}"
@@ -155,8 +155,8 @@ class AutomatedSignalGenerator:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
 
     def _create_signal_from_analysis(
-        self, 
-        current_price: float, 
+        self,
+        current_price: float,
         trend_analysis: Dict[str, Any],
         support_resistance: Dict[str, float]
     ) -> Optional[Dict[str, Any]]:
@@ -231,8 +231,8 @@ class AutomatedSignalGenerator:
             logger.error(f"Fehler bei der Signal-Erstellung: {e}")
             return None
 
-    def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], 
-                               strength: float, 
+    def _calculate_signal_quality(self, trend_analysis: Dict[str, Any],
+                               strength: float,
                                expected_profit: float) -> float:
         """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
@@ -276,6 +276,10 @@ class AutomatedSignalGenerator:
             logger.info(f"Starte Benachrichtigung über neues Signal. Aktive Nutzer: {len(self.bot.active_users)}")
             logger.debug(f"Aktive Nutzer IDs: {self.bot.active_users}")
 
+            if not self.bot.active_users:
+                logger.warning("Keine aktiven Nutzer gefunden!")
+                return
+
             # Hole das aktuelle Wallet-Guthaben
             balance = self.bot.wallet_manager.get_balance()
 
@@ -298,8 +302,8 @@ class AutomatedSignalGenerator:
                 f"Einstieg: {signal['entry']:.2f} USD\n"
                 f"Stop Loss: {signal['stop_loss']:.2f} USD\n"
                 f"Take Profit: {signal['take_profit']:.2f} USD\n\n"
-                f"Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
-                f"Signal-Qualität: {signal['signal_quality']}/10\n\n"
+                f"📈 Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
+                f"✨ Signal-Qualität: {signal['signal_quality']}/10\n\n"
                 f"💰 Verfügbares Guthaben: {balance:.4f} SOL\n\n"
                 f"Schnell reagieren! Der Markt wartet nicht! 🚀"
             )
@@ -314,46 +318,30 @@ class AutomatedSignalGenerator:
                 ]
             ]
 
-            # Sende Nachricht mit Chart an alle aktiven Bot-Benutzer
-            if not self.bot.active_users:
-                logger.warning("Keine aktiven Nutzer gefunden!")
-                return
-
+            # Sende eine einzelne Nachricht mit Chart und Signal-Details
             for user_id in self.bot.active_users:
                 try:
                     logger.info(f"Versuche Signal an User {user_id} zu senden...")
-                    # Sende zuerst das Chart-Bild
                     if chart_image:
-                        logger.info(f"Sende Prediction Chart an User {user_id}...")
+                        # Sende eine einzelne Nachricht mit Chart und Text
                         self.bot.updater.bot.send_photo(
                             chat_id=user_id,
                             photo=chart_image,
-                            caption="📊 Preisprognose für das Trading Signal"
+                            caption=signal_message,
+                            reply_markup={"inline_keyboard": keyboard}
                         )
-                        logger.info(f"Prediction Chart erfolgreich an User {user_id} gesendet")
+                        logger.info(f"Trading Signal mit Chart erfolgreich an User {user_id} gesendet")
                     else:
-                        logger.warning("Kein Chart-Bild verfügbar für das Signal")
-
-                    # Dann sende die Signal-Details
-                    logger.info(f"Sende Signal-Details an User {user_id}...")
-                    self.bot.updater.bot.send_message(
-                        chat_id=user_id,
-                        text=signal_message,
-                        reply_markup={"inline_keyboard": keyboard}
-                    )
-                    logger.info(f"Trading Signal erfolgreich an User {user_id} gesendet")
-
-                except Exception as send_error:
-                    logger.error(f"Fehler beim Senden der Nachrichten an User {user_id}: {send_error}")
-                    # Versuche es erneut nur mit der Text-Nachricht
-                    try:
+                        # Fallback: Sende nur Text wenn kein Chart verfügbar
                         self.bot.updater.bot.send_message(
                             chat_id=user_id,
                             text=signal_message + "\n\n⚠️ Chart konnte nicht generiert werden.",
                             reply_markup={"inline_keyboard": keyboard}
                         )
-                    except Exception as fallback_error:
-                        logger.error(f"Auch Fallback-Nachricht an User {user_id} fehlgeschlagen: {fallback_error}")
+                        logger.warning(f"Trading Signal ohne Chart an User {user_id} gesendet")
+
+                except Exception as send_error:
+                    logger.error(f"Fehler beim Senden der Nachricht an User {user_id}: {send_error}")
 
         except Exception as e:
             logger.error(f"Fehler beim Senden der Signal-Benachrichtigung: {e}")

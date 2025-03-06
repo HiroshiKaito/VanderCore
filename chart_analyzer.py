@@ -4,6 +4,7 @@ from typing import Dict, Any
 import logging
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
+import mplfinance as mpf
 from io import BytesIO
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,14 @@ class ChartAnalyzer:
 
             market_info = dex_connector.get_market_info(token_address)
             if market_info and market_info.get('price', 0) > 0:
+                price = float(market_info['price'])
                 new_data = pd.DataFrame([{
                     'timestamp': current_time,
-                    'price': float(market_info['price']),
-                    'volume': float(market_info.get('volume', 0))
+                    'Open': price,
+                    'High': price * 1.001,  # Simuliere leichte Preisschwankungen
+                    'Low': price * 0.999,
+                    'Close': price,
+                    'Volume': float(market_info.get('volume', 0))
                 }])
 
                 self.data = pd.concat([self.data, new_data], ignore_index=True)
@@ -42,64 +47,104 @@ class ChartAnalyzer:
                 self.data = self.data[self.data['timestamp'] > cutoff_time]
 
                 self.last_update = current_time
-                logger.info(f"Neue Preisdaten hinzugefügt - Aktueller Preis: {market_info['price']:.2f} USDC")
+                logger.info(f"Neue Preisdaten hinzugefügt - Aktueller Preis: {price:.2f} USDC")
 
         except Exception as e:
             logger.error(f"Fehler beim Aktualisieren der Preisdaten: {e}")
 
     def create_prediction_chart(self, entry_price: float, target_price: float, stop_loss: float) -> BytesIO:
-        """Erstellt einen Chart mit Vorhersage und Ein-/Ausstiegspunkten"""
+        """Erstellt einen Candlestick-Chart mit Vorhersage und Ein-/Ausstiegspunkten"""
         try:
             logger.info(f"Erstelle Prediction Chart - Entry: {entry_price:.2f}, Target: {target_price:.2f}, Stop: {stop_loss:.2f}")
-            plt.figure(figsize=(10, 6))
-            plt.style.use('dark_background')  # Dunkles Theme für bessere Lesbarkeit
 
-            # Plot Preisdaten
-            plt.plot(self.data['timestamp'], self.data['price'], 
-                    color='#4CAF50', linewidth=2, label='SOL/USDC')
+            # Bereite Daten für mplfinance vor
+            df = self.data.copy()
+            df.set_index('timestamp', inplace=True)
 
-            # Aktuelle Zeit für Vorhersagepunkte
-            current_time = self.data['timestamp'].iloc[-1]
-            future_time = current_time + timedelta(minutes=5)  # Projektion 5 Minuten in die Zukunft
+            # Definiere Plot-Style
+            mc = mpf.make_marketcolors(
+                up='#4CAF50',
+                down='#FF5252',
+                edge='inherit',
+                wick='inherit',
+                volume='#7B1FA2'
+            )
+            s = mpf.make_mpf_style(
+                marketcolors=mc,
+                gridstyle='solid',
+                gridcolor='#444444',
+                figcolor='#1a1a1a',
+                facecolor='#2d2d2d',
+                edgecolor='#444444',
+                volume_linewidth=2
+            )
 
-            # Entry Point (Grün)
-            plt.scatter([current_time], [entry_price], color='lime', s=100, 
-                       marker='^', label='Einstieg', zorder=5)
+            # Erstelle Annotations für Entry, Target und Stop Loss
+            current_time = df.index[-1]
+            future_time = current_time + timedelta(minutes=5)
 
-            # Take Profit (Blau)
-            plt.scatter([future_time], [target_price], color='cyan', s=100, 
-                       marker='*', label='Take Profit', zorder=5)
+            entry_scatter = dict(
+                y=[entry_price],
+                x=[current_time],
+                marker='^',
+                color='lime',
+                markersize=100,
+                label='Entry'
+            )
 
-            # Stop Loss (Rot)
-            plt.scatter([future_time], [stop_loss], color='red', s=100, 
-                       marker='v', label='Stop Loss', zorder=5)
+            target_scatter = dict(
+                y=[target_price],
+                x=[future_time],
+                marker='*',
+                color='cyan',
+                markersize=100,
+                label='Target'
+            )
 
-            # Gestrichelte Linie für Preisprojektion
-            plt.plot([current_time, future_time], [entry_price, target_price], 
-                    'g--', alpha=0.5)
-            plt.plot([current_time, future_time], [entry_price, stop_loss], 
-                    'r--', alpha=0.5)
+            stop_scatter = dict(
+                y=[stop_loss],
+                x=[future_time],
+                marker='v',
+                color='red',
+                markersize=100,
+                label='Stop'
+            )
 
-            # Support & Resistance
-            if self.last_support and self.last_resistance:
-                plt.axhline(y=self.last_support, color='gray', linestyle='--', alpha=0.3)
-                plt.axhline(y=self.last_resistance, color='gray', linestyle='--', alpha=0.3)
+            # Plot erstellen
+            fig, axlist = mpf.plot(
+                df,
+                type='candle',
+                volume=True,
+                style=s,
+                figsize=(10, 6),
+                addplot=[
+                    mpf.make_addplot([entry_price] * len(df), color='lime', linestyle='--', width=1),
+                    mpf.make_addplot([target_price] * len(df), color='cyan', linestyle='--', width=1),
+                    mpf.make_addplot([stop_loss] * len(df), color='red', linestyle='--', width=1)
+                ],
+                alines=dict(
+                    alines=[[current_time, future_time, entry_price, target_price]],
+                    colors=['g--'], 
+                    linewidths=[0.5],
+                    alpha=0.5
+                ),
+                returnfig=True
+            )
 
-            # Formatierung
-            plt.title('SOL/USDC Preisprognose', fontsize=12, pad=15)
-            plt.xlabel('Zeit')
-            plt.ylabel('Preis (USDC)')
-            plt.grid(True, alpha=0.2)
-            plt.legend(loc='upper left')
+            # Füge Scatter-Plots hinzu
+            ax = axlist[0]
+            ax.scatter(**entry_scatter)
+            ax.scatter(**target_scatter)
+            ax.scatter(**stop_scatter)
 
             # Speichere Chart in BytesIO
             img_bio = BytesIO()
-            plt.savefig(img_bio, format='png', bbox_inches='tight', 
+            fig.savefig(img_bio, format='png', bbox_inches='tight', 
                        facecolor='#1a1a1a', edgecolor='none')
             img_bio.seek(0)
-            plt.close()
+            plt.close(fig)
 
-            logger.info("Prediction Chart erfolgreich erstellt")
+            logger.info("Candlestick Chart erfolgreich erstellt")
             return img_bio
 
         except Exception as e:
@@ -117,8 +162,8 @@ class ChartAnalyzer:
             recent_data = self.data.sort_values('timestamp').tail(2)
 
             # Berechne den Trend basierend auf der direkten Preisänderung
-            first_price = recent_data['price'].iloc[0]
-            last_price = recent_data['price'].iloc[-1]
+            first_price = recent_data['Close'].iloc[0]
+            last_price = recent_data['Close'].iloc[-1]
 
             # Bestimme Trend und Stärke - Maximale Sensitivität
             trend = 'aufwärts' if last_price > first_price else 'abwärts'
@@ -150,7 +195,7 @@ class ChartAnalyzer:
                 logger.info(f"Zu wenig Daten für Support/Resistance Berechnung")
                 return self._get_fallback_levels()
 
-            prices = self.data['price'].values
+            prices = self.data['Close'].values
 
             # Berechne Support und Resistance mit sehr engen Perzentilen
             support = np.percentile(prices, 30)  # Verringert von 40 auf 30
@@ -188,7 +233,7 @@ class ChartAnalyzer:
 
         # Wenn keine vorherigen Levels existieren, berechne aus aktuellem Preis
         if len(self.data) > 0:
-            current_price = self.data['price'].iloc[-1]
+            current_price = self.data['Close'].iloc[-1]
             return {
                 'support': current_price * 0.995,  # 0.5% unter aktuellem Preis
                 'resistance': current_price * 1.005  # 0.5% über aktuellem Preis

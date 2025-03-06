@@ -976,6 +976,19 @@ wheels = [
 ]
 
 [[package]]
+name = "mplfinance"
+version = "0.12.10b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6c/a9/34e7998d02fb58fae04f750444ce4e95e75f3a08dad17fb2d32098a97834/mplfinance-0.12.10b0.tar.gz", hash = "sha256:7da150b5851aa5119ad6e06b55e48338b619bb6773f1b85df5de67a5ffd917bf", size = 70117 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/d9/31c436ea7673c21a5bf3fc747bc7f63377582dfe845c3004d3e46f9deee0/mplfinance-0.12.10b0-py3-none-any.whl", hash = "sha256:76d3b095f05ff35de730751649de063bea4064d0c49b21b6182c82997a7f52bb", size = 75016 },
+]
+
+[[package]]
 name = "multidict"
 version = "6.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1643,6 +1656,7 @@ dependencies = [
     { name = "flask" },
     { name = "flask-socketio" },
     { name = "matplotlib" },
+    { name = "mplfinance" },
     { name = "numpy" },
     { name = "openai" },
     { name = "opencv-python" },
@@ -1672,6 +1686,7 @@ requires-dist = [
     { name = "flask", specifier = ">=3.1.0" },
     { name = "flask-socketio", specifier = ">=5.5.1" },
     { name = "matplotlib", specifier = ">=3.10.1" },
+    { name = "mplfinance", specifier = ">=0.12.10b0" },
     { name = "numpy", specifier = ">=2.2.3" },
     { name = "openai", specifier = ">=1.65.3" },
     { name = "opencv-python", specifier = ">=4.11.0.86" },
