@@ -1,8 +1,8 @@
 import logging
 import os
 import json
-import threading
 from datetime import datetime
+import threading
 from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -14,7 +14,7 @@ from automated_signal_generator import AutomatedSignalGenerator
 from signal_processor import SignalProcessor
 from dex_connector import DexConnector
 
-# Logging Setup
+# Detailliertes Logging Setup
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -70,9 +70,10 @@ def health():
 class SolanaWalletBot:
     def __init__(self):
         """Initialisiert den Bot mit Konfiguration"""
-        logger.info("Initialisiere Bot...")
+        logger.info("=== Bot-Initialisierung startet ===")
         try:
             self.config = Config()
+            logger.info("Config geladen")
 
             # Überprüfe kritische Konfiguration
             if not self.config.TELEGRAM_TOKEN:
@@ -80,7 +81,7 @@ class SolanaWalletBot:
             if not self.config.ADMIN_USER_ID:
                 raise ValueError("ADMIN_USER_ID nicht gesetzt")
 
-            logger.info("Konfiguration erfolgreich geladen")
+            logger.info(f"Token validiert, Admin ID: {self.config.ADMIN_USER_ID}")
 
             self.active_users = set()
             self.is_running = False
@@ -98,20 +99,22 @@ class SolanaWalletBot:
                     self.active_users = set(map(str, saved_users))
                     logger.info(f"Aktive Nutzer geladen: {self.active_users}")
 
-            logger.info("Bot erfolgreich initialisiert")
+            logger.info("=== Bot-Initialisierung erfolgreich abgeschlossen ===")
 
         except Exception as e:
-            logger.error(f"Fehler bei Bot-Initialisierung: {e}")
+            logger.error(f"=== KRITISCHER FEHLER bei Bot-Initialisierung: {e} ===", exc_info=True)
             raise
 
     def run(self):
         """Startet den Bot im Hauptthread"""
         try:
-            logger.info("Starte Telegram Bot...")
+            logger.info("=== Starte Telegram Bot ===")
 
-            # Initialisiere Updater
+            # Erstelle und konfiguriere Updater
+            logger.info(f"Erstelle Updater mit Token...")
             self.updater = Updater(self.config.TELEGRAM_TOKEN, use_context=True)
             dp = self.updater.dispatcher
+            logger.info("Updater erfolgreich erstellt")
 
             # Registriere Handler
             handlers = [
@@ -135,45 +138,35 @@ class SolanaWalletBot:
             self.signal_generator.start()
             logger.info("Signal Generator erfolgreich gestartet")
 
-            # Starte Polling (im Hauptthread)
+            # Bot aktivieren
             self.is_running = True
-            logger.info("Bot ist jetzt aktiv und empfangsbereit")
+            logger.info("Bot ist aktiv")
 
-            # Sende Startmeldung an Admin
+            # Test-Nachricht an Admin
             try:
                 self.updater.bot.send_message(
                     chat_id=self.config.ADMIN_USER_ID,
                     text="🚀 Bot wurde erfolgreich gestartet!"
                 )
-                logger.info("Admin-Benachrichtigung gesendet")
+                logger.info("Admin-Benachrichtigung erfolgreich gesendet")
             except Exception as e:
-                logger.error(f"Fehler beim Senden der Admin-Nachricht: {e}")
+                logger.error(f"Fehler beim Senden der Admin-Nachricht: {e}", exc_info=True)
 
-            # Blockiere den Hauptthread mit dem Bot
+            # Starte Polling im Hauptthread
+            logger.info("Starte Polling...")
+            self.updater.start_polling(drop_pending_updates=True)
+            logger.info("Polling erfolgreich gestartet")
+
+            # Blockiere Hauptthread
+            logger.info("Bot läuft jetzt im Hauptthread...")
             self.updater.idle()
 
         except Exception as e:
-            logger.error(f"Fehler beim Starten des Telegram Bots: {e}", exc_info=True)
+            logger.error(f"=== KRITISCHER FEHLER beim Bot-Start: {e} ===", exc_info=True)
             self.is_running = False
             if self.signal_generator:
                 self.signal_generator.stop()
             raise
-
-    def stop(self):
-        """Stoppt den Bot"""
-        try:
-            if self.signal_generator:
-                self.signal_generator.stop()
-                logger.info("Signal Generator gestoppt")
-
-            if self.updater:
-                self.updater.stop()
-                logger.info("Updater gestoppt")
-
-            self.is_running = False
-            logger.info("Bot erfolgreich gestoppt")
-        except Exception as e:
-            logger.error(f"Fehler beim Stoppen des Bots: {e}")
 
     def start_command(self, update: Update, context: CallbackContext):
         """Start-Befehl Handler"""
@@ -197,22 +190,27 @@ class SolanaWalletBot:
             logger.info(f"Willkommensnachricht an User {user_id} gesendet")
 
         except Exception as e:
-            logger.error(f"Fehler beim Start-Befehl: {e}")
-            update.message.reply_text(
-                "❌ Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
-            )
+            logger.error(f"Fehler beim Start-Befehl: {e}", exc_info=True)
+            try:
+                update.message.reply_text(
+                    "❌ Es ist ein Fehler aufgetreten. Bitte versuchen Sie es später erneut."
+                )
+            except Exception as send_error:
+                logger.error(f"Konnte Fehlermeldung nicht senden: {send_error}")
 
     def help_command(self, update: Update, context: CallbackContext):
         """Hilfe-Befehl Handler"""
         try:
+            logger.info(f"Hilfe-Befehl von User {update.effective_user.id}")
             update.message.reply_text(
                 "📚 Verfügbare Befehle:\n\n"
                 "/start - Bot starten\n"
                 "/hilfe - Diese Hilfe anzeigen\n"
                 "/test_signal - Test-Signal generieren"
             )
+            logger.info("Hilfe-Nachricht gesendet")
         except Exception as e:
-            logger.error(f"Fehler beim Hilfe-Befehl: {e}")
+            logger.error(f"Fehler beim Hilfe-Befehl: {e}", exc_info=True)
 
     def test_signal(self, update: Update, context: CallbackContext):
         """Generiert ein Test-Signal"""
@@ -267,40 +265,62 @@ class SolanaWalletBot:
                 update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
 
         except Exception as e:
-            logger.error(f"Fehler beim Generieren des Test-Signals: {e}")
+            logger.error(f"Fehler beim Generieren des Test-Signals: {e}", exc_info=True)
             update.message.reply_text("❌ Fehler beim Generieren des Test-Signals")
 
     def button_handler(self, update: Update, context: CallbackContext):
         """Verarbeitet Button-Klicks"""
         query = update.callback_query
         try:
+            logger.info(f"Button-Klick von User {query.from_user.id}: {query.data}")
             if query.data == "trade_signal_new":
                 query.answer("Signal wird verarbeitet...")
                 query.message.reply_text("✅ Trading Signal wird ausgeführt!")
+                logger.info(f"Trading Signal wird ausgeführt für User {query.from_user.id}")
             elif query.data == "ignore_signal":
                 query.answer("Signal ignoriert")
                 query.message.delete()
+                logger.info(f"Signal ignoriert von User {query.from_user.id}")
         except Exception as e:
-            logger.error(f"Fehler beim Button-Handler: {e}")
+            logger.error(f"Fehler beim Button-Handler: {e}", exc_info=True)
 
     def handle_text(self, update: Update, context: CallbackContext):
         """Verarbeitet Text-Nachrichten"""
         try:
+            logger.info(f"Text-Nachricht von User {update.effective_user.id}")
             update.message.reply_text(
                 "❓ Bitte nutze die verfügbaren Befehle.\n"
                 "Tippe /hilfe für eine Übersicht."
             )
         except Exception as e:
-            logger.error(f"Fehler bei der Textverarbeitung: {e}")
+            logger.error(f"Fehler bei der Textverarbeitung: {e}", exc_info=True)
+
+    def stop(self):
+        """Stoppt den Bot"""
+        try:
+            if self.signal_generator:
+                self.signal_generator.stop()
+                logger.info("Signal Generator gestoppt")
+
+            if self.updater:
+                self.updater.stop()
+                logger.info("Updater gestoppt")
+
+            self.is_running = False
+            logger.info("Bot erfolgreich gestoppt")
+        except Exception as e:
+            logger.error(f"Fehler beim Stoppen des Bots: {e}")
+
 
 def main():
     """Hauptfunktion zum Starten der Anwendung"""
     global telegram_bot
     try:
-        logger.info("Starte Anwendung...")
+        logger.info("=== Starte Hauptanwendung ===")
 
         # Erstelle Bot
         telegram_bot = SolanaWalletBot()
+        logger.info("Bot-Instanz erstellt")
 
         # Starte Flask-Server im Hintergrund
         flask_thread = threading.Thread(target=run_flask)
@@ -309,10 +329,11 @@ def main():
         logger.info("Flask-Server-Thread gestartet")
 
         # Starte Telegram Bot im Hauptthread
+        logger.info("Starte Telegram Bot im Hauptthread...")
         telegram_bot.run()
 
     except Exception as e:
-        logger.error(f"Kritischer Fehler beim Starten: {e}", exc_info=True)
+        logger.error(f"=== KRITISCHER FEHLER in main(): {e} ===", exc_info=True)
         if telegram_bot:
             telegram_bot.stop()
 
