@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dex_connector import DexConnector
 from chart_analyzer import ChartAnalyzer
@@ -12,15 +13,25 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def test_market_data():
+async def test_market_data():
     dex = DexConnector()
     analyzer = ChartAnalyzer()
     ai_engine = AITradingEngine()
 
-    logger.info("Starting market data and AI test...")
+    logger.info("Starting market data and API test...")
 
-    # Test 5 price updates with AI analysis
-    price_data = []
+    # Test external APIs
+    try:
+        market_data = await ai_engine.fetch_market_data()
+        for api_name, data in market_data.items():
+            if data:
+                logger.info(f"{api_name} API Test: Erfolgreich")
+            else:
+                logger.warning(f"{api_name} API Test: Keine Daten")
+    except Exception as e:
+        logger.error(f"Fehler beim API Test: {e}")
+
+    # Test DEX price updates
     for i in range(5):
         try:
             # Get market data
@@ -30,48 +41,25 @@ def test_market_data():
                 volume = market_info.get('volume', 0)
                 timestamp = datetime.now()
 
-                price_data.append({
-                    'timestamp': timestamp,
-                    'close': price,
-                    'volume': volume,
-                    'high': price * 1.001,  # Simulate high/low for testing
-                    'low': price * 0.999
-                })
+                logger.info(f"[{i+1}/5] SOL Preis: {price:.2f} USDC, Volumen: {volume:.2f}")
 
-                logger.info(f"[{i+1}/5] Fetched SOL price: {price:.2f} USDC")
+                # Update chart data and analyze
+                analyzer.update_price_data(dex, "SOL")
+                trend = analyzer.analyze_trend()
+                logger.info(f"Trend Analyse: {trend}")
 
-                if len(price_data) >= 2:  # Need at least 2 points for analysis
-                    # Create DataFrame for analysis
-                    df = pd.DataFrame(price_data)
-                    df.set_index('timestamp', inplace=True)
-
-                    # Update chart data
-                    analyzer.update_price_data(dex, "SOL")
-
-                    # Get AI prediction
-                    prediction = ai_engine.predict_next_move(df)
-                    if prediction['prediction'] is not None:
-                        logger.info(f"AI Prediction:"
-                                  f"\n - Next Price: {prediction['prediction']:.2f}"
-                                  f"\n - Confidence: {prediction['confidence']:.2f}"
-                                  f"\n - Signal: {prediction['signal']}")
-
-                    # Analyze trend
-                    trend = analyzer.analyze_trend()
-                    logger.info(f"Trend Analysis: {trend}")
-
-                    # Get support/resistance
-                    levels = analyzer.get_support_resistance()
-                    logger.info(f"Support/Resistance: {levels}")
+                # Get support/resistance
+                levels = analyzer.get_support_resistance()
+                logger.info(f"Support/Resistance: {levels}")
             else:
-                logger.error("Failed to get valid market data")
+                logger.error("Keine gültigen Marktdaten erhalten")
 
         except Exception as e:
-            logger.error(f"Error in test iteration {i+1}: {e}")
+            logger.error(f"Fehler in Test-Iteration {i+1}: {e}")
 
-        time.sleep(5)  # Wait 5 seconds between updates
+        await asyncio.sleep(5)  # Warte 5 Sekunden zwischen Updates
 
-    logger.info("Market data and AI test completed")
+    logger.info("Marktdaten und API Test abgeschlossen")
 
 if __name__ == "__main__":
-    test_market_data()
+    asyncio.run(test_market_data())

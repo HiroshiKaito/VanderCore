@@ -5,6 +5,9 @@ import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
 import ta
+import requests
+from datetime import datetime, timedelta
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +22,12 @@ class AITradingEngine:
 
         # API Endpoints
         self.coingecko_api = "https://api.coingecko.com/api/v3"
-        self.dex_screener_api = "https://api.dexscreener.com/latest"
-        self.reddit_api = "https://www.reddit.com/r/solana"
-        self.nitter_api = "https://nitter.net/search"
+        self.dex_screener_api = "https://api.dexscreener.com/latest"  # Korrigierter Base-URL
+        self.nitter_api = "https://nitter.cz/search"  # Alternative Nitter Instance mit SSL
+        self.solana_rpc = "https://api.mainnet-beta.solana.com"
+
+        # Token Addresses
+        self.sol_token_address = "So11111111111111111111111111111111111111112"  # Wrapped SOL token address
 
         logger.info("KI-Trading-Engine initialisiert mit scikit-learn")
 
@@ -197,18 +203,20 @@ class AITradingEngine:
         try:
             data = {}
             headers = {
-                'User-Agent': 'Mozilla/5.0 (compatible; SolanaBot/1.0; +http://example.com)'
+                'User-Agent': 'Mozilla/5.0 (compatible; SolanaBot/1.0)',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'X-API-KEY': ''  # DEX Screener public API doesn't require a key
             }
 
             # CoinGecko Daten mit Rate Limiting und Retry
             try:
-                coingecko_url = f"{self.coingecko_api}/coins/solana"
+                coingecko_url = f"{self.coingecko_api}/simple/price"
                 params = {
-                    'localization': 'false',
-                    'tickers': 'true',
-                    'market_data': 'true',
-                    'community_data': 'true',
-                    'developer_data': 'true'
+                    'ids': 'solana',
+                    'vs_currencies': 'usd',
+                    'include_24hr_vol': True,
+                    'include_24hr_change': True
                 }
                 response = requests.get(coingecko_url, params=params, headers=headers, timeout=10)
                 if response.status_code == 200:
@@ -221,36 +229,101 @@ class AITradingEngine:
 
             # DEX Screener Daten
             try:
-                dex_url = f"{self.dex_screener_api}/dex/solana"
-                response = requests.get(dex_url, headers=headers, timeout=10)
+                # DEX Screener API Endpoint für Solana Pairs
+                dex_url = f"{self.dex_screener_api}/pairs"
+                params = {
+                    'chainId': 'solana',
+                    'q': self.sol_token_address
+                }
+
+                logger.info(f"Versuche DEX Screener API Aufruf: {dex_url} mit Parametern: {params}")
+                response = requests.get(dex_url, params=params, headers=headers, timeout=15)
+
                 if response.status_code == 200:
-                    data['dex_screener'] = response.json()
-                    logger.info("DEX Screener Daten erfolgreich abgerufen")
+                    api_response = response.json()
+                    logger.info(f"DEX Screener Rohdaten: {api_response}")
+
+                    if 'pairs' in api_response:
+                        # Filtere relevante SOL/USDC Paare
+                        sol_pairs = [
+                            pair for pair in api_response['pairs']
+                            if (pair.get('baseToken', {}).get('address', '').lower() == self.sol_token_address.lower() or
+                                'sol' in pair.get('baseToken', {}).get('symbol', '').lower())
+                        ]
+
+                        if sol_pairs:
+                            # Sortiere nach Handelsvolumen
+                            sol_pairs.sort(key=lambda x: float(x.get('volume', {}).get('h24', 0)), reverse=True)
+                            data['dex_screener'] = {
+                                'pairs': sol_pairs,
+                                'timestamp': datetime.now().isoformat()
+                            }
+                            logger.info(f"DEX Screener: {len(sol_pairs)} SOL Paare gefunden")
+                            logger.info(f"Bestes Pair: {sol_pairs[0].get('pairAddress')} mit 24h Volume: {sol_pairs[0].get('volume', {}).get('h24', '0')} USD")
+                        else:
+                            logger.warning("DEX Screener: Keine SOL Paare gefunden")
+                            data['dex_screener'] = await self._get_solana_rpc_fallback()
+                    else:
+                        logger.warning(f"DEX Screener: Unerwartetes Response Format: {api_response}")
+                        data['dex_screener'] = await self._get_solana_rpc_fallback()
+
+                elif response.status_code == 429:  # Rate limit
+                    logger.warning("DEX Screener Rate Limit erreicht, verwende Fallback")
+                    data['dex_screener'] = await self._get_solana_rpc_fallback()
                 else:
-                    logger.warning(f"DEX Screener API Fehler: {response.status_code}")
+                    logger.warning(f"DEX Screener API Fehler: {response.status_code}, Response: {response.text}")
+                    data['dex_screener'] = await self._get_solana_rpc_fallback()
             except Exception as e:
                 logger.error(f"DEX Screener API Fehler: {e}")
-
-            # Reddit Sentiment (Simple Scraping)
-            try:
-                response = requests.get(f"{self.reddit_api}/new.json", headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data['reddit'] = response.json()
-                    logger.info("Reddit Daten erfolgreich abgerufen")
-                else:
-                    logger.warning(f"Reddit API Fehler: {response.status_code}")
-            except Exception as e:
-                logger.error(f"Reddit API Fehler: {e}")
+                data['dex_screener'] = await self._get_solana_rpc_fallback()
 
             # Nitter (Twitter Alternative) Sentiment
             try:
-                nitter_params = {'f': 'tweets', 'q': 'solana'}
-                response = requests.get(self.nitter_api, params=nitter_params, headers=headers, timeout=10)
-                if response.status_code == 200:
-                    data['nitter'] = response.text
-                    logger.info("Nitter Daten erfolgreich abgerufen")
-                else:
-                    logger.warning(f"Nitter API Fehler: {response.status_code}")
+                nitter_params = {
+                    'f': 'tweets',
+                    'q': 'solana language:de OR language:en',
+                    'since': '12h'  # Reduziert auf 12h für bessere Performance
+                }
+                retry_count = 0
+                max_retries = 3
+
+                while retry_count < max_retries:
+                    try:
+                        response = requests.get(
+                            self.nitter_api,
+                            params=nitter_params,
+                            headers=headers,
+                            timeout=20,  # Erhöhtes Timeout
+                        )
+                        if response.status_code == 200:
+                            data['nitter'] = {
+                                'text': response.text,
+                                'timestamp': datetime.now().isoformat()
+                            }
+                            logger.info("Nitter Daten erfolgreich abgerufen")
+                            break
+                        elif response.status_code == 429:  # Rate Limit
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                await asyncio.sleep(2 ** retry_count)  # Exponential backoff
+                                continue
+                            logger.warning("Nitter Rate Limit erreicht nach allen Versuchen")
+                            break
+                        else:
+                            logger.warning(f"Nitter API Fehler: {response.status_code}")
+                            if retry_count < max_retries - 1:
+                                retry_count += 1
+                                await asyncio.sleep(2 ** retry_count)
+                                continue
+                            break
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"Nitter Request Fehler: {e}")
+                        if retry_count < max_retries - 1:
+                            retry_count += 1
+                            await asyncio.sleep(2 ** retry_count)
+                            continue
+                        break
+
             except Exception as e:
                 logger.error(f"Nitter API Fehler: {e}")
 
@@ -263,6 +336,24 @@ class AITradingEngine:
 
         except Exception as e:
             logger.error(f"Genereller Fehler beim Abrufen der Marktdaten: {e}")
+            return {}
+
+    async def _get_solana_rpc_fallback(self) -> Dict[str, Any]:
+        """Fallback für DEX Screener mit Solana RPC"""
+        try:
+            rpc_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getRecentBlockhash"
+            }
+            response = requests.post(self.solana_rpc, json=rpc_payload)
+            if response.status_code == 200:
+                logger.info("Solana RPC Fallback erfolgreich")
+                return response.json()
+            logger.warning(f"Solana RPC Fallback fehlgeschlagen: {response.status_code}")
+            return {}
+        except Exception as e:
+            logger.error(f"Solana RPC Fallback Fehler: {e}")
             return {}
 
     def backtest_strategy(self, historical_data: pd.DataFrame) -> Dict[str, float]:
@@ -323,8 +414,3 @@ class AITradingEngine:
         except Exception as e:
             logger.error(f"Fehler beim Backtesting: {e}")
             return {}
-
-
-# Notwendige zusätzliche Imports
-import requests
-from datetime import datetime, timedelta
