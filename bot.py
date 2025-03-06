@@ -641,7 +641,6 @@ class SolanaWalletBot:
             # Bestätige den Empfang des Befehls an den Benutzer
             update.message.reply_text("🔄 Generiere Test-Signal...")
 
-            current_time = datetime.now(pytz.UTC)
             # Erstelle ein Test-Signal
             test_signal = {
                 'pair': 'SOL/USD',
@@ -649,7 +648,7 @@ class SolanaWalletBot:
                 'entry': 145.50,
                 'stop_loss': 144.50,
                 'take_profit': 147.50,
-                'timestamp': current_time.timestamp(),
+                'timestamp': datetime.now().timestamp(),
                 'dex_connector': self.dex_connector,
                 'token_address': "SOL",
                 'expected_profit': 1.37,
@@ -661,64 +660,30 @@ class SolanaWalletBot:
             logger.info("Verarbeite Test-Signal...")
             processed_signal = self.signal_processor.process_signal(test_signal)
             if processed_signal:
-                logger.info("Test-Signal erfolgreich verarbeitet, sende Benachrichtigung...")
-
-                # Initialisiere Signal Generator wenn nötig
-                if not self.signal_generator:
-                    logger.info("Initialisiere Signal Generator...")
-                    self.signal_generator = AutomatedSignalGenerator(
-                        self.dex_connector,
-                        self.signal_processor,
-                        self
-                    )
-                    self.signal_generator.start()
-                    logger.info("Signal Generator erfolgreich gestartet")
-
-                # Aktualisiere Chart-Daten vor der Chart-Generierung
-                self.signal_generator.chart_analyzer.update_price_data(self.dex_connector, "SOL")
-                logger.info("Chart-Daten aktualisiert")
-
-                # Falls keine Chart-Daten vorhanden sind, simuliere Dummy-Daten für den Test
-                if self.signal_generator.chart_analyzer.data.empty:
-                    logger.info("Keine echten Marktdaten verfügbar, erstelle Dummy-Daten für Test")
-                    # Erstelle Dummy OHLC-Daten (10 Datenpunkte über die letzten 30 Minuten)
-                    dummy_data = pd.DataFrame({
-                        'Open': [test_signal['entry']]*10,
-                        'High': [test_signal['entry']*1.01]*10,
-                        'Low': [test_signal['entry']*0.99]*10,
-                        'Close': [test_signal['entry']]*10,
-                        'Volume': [1000000]*10
-                    }, index=[current_time - timedelta(minutes=30-3*i) for i in range(10)])
-                    self.signal_generator.chart_analyzer.data = dummy_data
-                    logger.info("Dummy-Chart-Daten generiert")
-
-                # Versuche Chart zu generieren bevor das Signal gesendet wird
-                logger.info("Generiere Chart...")
-                chart_image = self.signal_generator.chart_analyzer.create_prediction_chart(
-                    entry_price=processed_signal['entry'],
-                    target_price=processed_signal['take_profit'],
-                    stop_loss=processed_signal['stop_loss']
+                signal_message = (
+                    f"🎯 Trading Signal erkannt!\n\n"
+                    f"Pair: {processed_signal['pair']}\n"
+                    f"Position: {'📈 LONG' if processed_signal['direction'] == 'long' else '📉 SHORT'}\n"
+                    f"Entry: {processed_signal['entry']:.2f} USDC\n"
+                    f"Stop Loss: {processed_signal['stop_loss']:.2f} USDC\n"
+                    f"Take Profit: {processed_signal['take_profit']:.2f} USDC\n"
+                    f"Erwarteter Profit: {processed_signal['expected_profit']:.1f}%\n"
+                    f"Signal Qualität: {processed_signal['signal_quality']:.1f}/10\n"
+                    f"Trend Stärke: {processed_signal['trend_strength']:.2f}"
                 )
 
-                if chart_image:
-                    logger.info("Chart erfolgreich generiert")
-                else:
-                    logger.error("Chart konnte nicht generiert werden")
-                    update.message.reply_text("❌ Fehler bei der Chart-Generierung")
-                    return
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Signal handeln", callback_data="trade_signal_new"),
+                        InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+                    ]
+                ]
 
-                # Füge den aktuellen Benutzer zu aktiven Nutzern hinzu
-                self.active_users.add(update.effective_user.id)
-                logger.info(f"User {update.effective_user.id} zu aktiven Nutzern hinzugefügt")
-
-                # Sende das Signal direkt ohne zusätzliche Bestätigungsnachricht
-                logger.info("Sende Signal an Benutzer...")
-                try:
-                    self.signal_generator._notify_users_about_signal(processed_signal)
-                    logger.info("Signal erfolgreich gesendet")
-                except Exception as send_error:
-                    logger.error(f"Fehler beim Senden des Signals: {send_error}")
-                    update.message.reply_text("❌ Fehler beim Senden des Test-Signals")
+                update.message.reply_text(
+                    signal_message,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                logger.info("Test-Signal erfolgreich gesendet")
             else:
                 logger.error("Signal konnte nicht verarbeitet werden")
                 update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
@@ -776,61 +741,44 @@ class SolanaWalletBot:
             update.message.reply_text("❌ Fehler beim Senden der Test-Benachrichtigung")
 
     def run(self):
-        """Startet den Bot"""        try:
+        """Startet den Bot"""
+        try:
             logger.info("Starte Bot...")
 
             # Lade gespeicherten Zustand
             self.load_state()
 
-            # Initialisiere Updater mit Retry-Mechanismus
-            retry_count = 0
-            max_retries = 3
+            # Initialisiere Updater
+            self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
+            dp = self.updater.dispatcher
 
-            while retry_count < max_retries:
-                try:
-                    self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
-                    dp = self.updater.dispatcher
+            # Registriere Handler
+            dp.add_handler(CommandHandler("start", self.start))
+            dp.add_handler(CommandHandler("hilfe", self.help_command))
+            dp.add_handler(CommandHandler("wallet", self.wallet_command))
+            dp.add_handler(CommandHandler("senden", self.send_command))
+            dp.add_handler(CommandHandler("empfangen", self.receive_command))
+            dp.add_handler(CommandHandler("trades", self.handle_trades_command))
+            dp.add_handler(CommandHandler("test_signal", self.test_signal))
+            dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
+            dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
 
-                    # Registriere Handler
-                    dp.add_handler(CommandHandler("start", self.start))
-                    dp.add_handler(CommandHandler("hilfe", self.help_command))
-                    dp.add_handler(CommandHandler("wallet", self.wallet_command))
-                    dp.add_handler(CommandHandler("senden", self.send_command))
-                    dp.add_handler(CommandHandler("empfangen", self.receive_command))
-                    dp.add_handler(CommandHandler("trades", self.handle_trades_command))
-                    dp.add_handler(CommandHandler("test_signal", self.test_signal))
-                    dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
-                    dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
+            # Füge Callback Query Handler hinzu
+            dp.add_handler(CallbackQueryHandler(self.button_handler))
 
-                    # Füge Callback Query Handler hinzu
-                    dp.add_handler(CallbackQueryHandler(self.button_handler))
-
-                    # Füge Error Handler hinzu
-                    dp.add_error_handler(self.error_handler)
-
-                    # Starte Polling
-                    logger.info("Starte Polling...")
-                    self.updater.start_polling(drop_pending_updates=True)
-                    break
-
-                except Exception as e:
-                    retry_count += 1
-                    logger.error(f"Fehler beim Initialisieren des Updaters (Versuch {retry_count}): {e}")
-                    if retry_count == max_retries:
-                        raise
-                    time.sleep(5 * retry_count)
+            # Füge Error Handler hinzu
+            dp.add_error_handler(self.error_handler)
 
             # Starte Flask im Hintergrund
             threading.Thread(target=run_flask, daemon=True).start()
             logger.info("Flask-Server gestartet")
 
-            # Starte Heartbeat mit korrekter Timezone
-            scheduler = BackgroundScheduler(timezone=self.timezone)
-            scheduler.add_job(self._send_heartbeat, 'interval', minutes=5)
-            scheduler.start()
-            logger.info("Heartbeat-Überwachung gestartet")
-
+            # Starte den Bot
+            logger.info("Starte Polling...")
+            self.updater.start_polling(drop_pending_updates=True)
             logger.info("Bot erfolgreich gestartet!")
+
+            # Warte auf Beenden
             self.updater.idle()
 
         except Exception as e:
