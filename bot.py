@@ -12,12 +12,15 @@ from telegram.error import Conflict, NetworkError, TelegramError
 from datetime import datetime
 import json
 import os
+import time
 from config import Config
 from wallet_manager import WalletManager
 from utils import format_amount, validate_amount, format_wallet_info
 from signal_processor import SignalProcessor
 from dex_connector import DexConnector
 from automated_signal_generator import AutomatedSignalGenerator
+from apscheduler.schedulers.background import BackgroundScheduler
+
 
 # Logging Setup mit detailliertem Format
 logging.basicConfig(
@@ -201,26 +204,79 @@ class SolanaWalletBot:
 
 
     def error_handler(self, update: object, context: CallbackContext) -> None:
-        """Verbesserte Fehlerbehandlung"""
+        """Verbesserte Fehlerbehandlung mit Auto-Recovery"""
         logger.error(f"Fehler aufgetreten: {context.error}")
         try:
             raise context.error
         except Conflict:
             logger.error("Konflikt mit anderer Bot-Instanz erkannt")
-            if self.updater:
-                logger.info("Versuche Polling neu zu starten...")
-                self.updater.stop()
-                self.updater.start_polling(drop_pending_updates=True)
+            self._attempt_recovery("conflict")
         except NetworkError:
             logger.error("Netzwerkfehler erkannt")
-            if self.updater:
-                logger.info("Versuche Verbindung wiederherzustellen...")
-                self.updater.stop()
-                self.updater.start_polling(drop_pending_updates=True)
+            self._attempt_recovery("network")
         except TelegramError as e:
             logger.error(f"Telegram API Fehler: {e}")
+            self._attempt_recovery("telegram")
         except Exception as e:
             logger.error(f"Unerwarteter Fehler: {e}")
+            self._attempt_recovery("general")
+
+    def _attempt_recovery(self, error_type: str, max_retries: int = 3) -> None:
+        """Versucht den Bot nach einem Fehler wiederherzustellen"""
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                logger.info(f"Recovery-Versuch {retry_count + 1}/{max_retries} für {error_type}")
+
+                # Benachrichtige Admin über Recovery-Versuch
+                self.notify_admin(
+                    f"Recovery-Versuch {retry_count + 1}/{max_retries} für {error_type}",
+                    is_critical=(retry_count == max_retries - 1)
+                )
+
+                # Speichere aktuellen Zustand
+                self.save_state()
+
+                if self.updater:
+                    # Stoppe bestehende Verbindungen
+                    self.updater.stop()
+
+                    # Warte kurz
+                    time.sleep(5)
+
+                    # Starte Polling neu
+                    self.updater.start_polling(drop_pending_updates=True)
+                    logger.info("Bot erfolgreich neu gestartet")
+
+                    # Erfolgreiche Recovery-Benachrichtigung
+                    self.notify_admin(f"Recovery für {error_type} erfolgreich")
+                    return
+
+            except Exception as e:
+                logger.error(f"Recovery-Versuch {retry_count + 1} fehlgeschlagen: {e}")
+                retry_count += 1
+                time.sleep(10 * retry_count)  # Exponentielles Backoff
+
+        logger.critical(f"Recovery nach {max_retries} Versuchen fehlgeschlagen")
+        self.notify_admin(
+            f"KRITISCH: Recovery nach {max_retries} Versuchen fehlgeschlagen. "
+            f"Manueller Eingriff erforderlich.",
+            is_critical=True
+        )
+
+    def _send_heartbeat(self):
+        """Sendet regelmäßige Heartbeat-Signale"""
+        try:
+            logger.debug("Heartbeat check...")
+            if not self.updater or not self.updater.running:
+                logger.warning("Bot nicht aktiv, starte Recovery")
+                self.notify_admin("Heartbeat-Check fehlgeschlagen, starte Recovery", is_critical=True)
+                self._attempt_recovery("heartbeat")
+            else:
+                logger.debug("Heartbeat OK")
+        except Exception as e:
+            logger.error(f"Heartbeat-Check fehlgeschlagen: {e}")
+            self.notify_admin(f"Heartbeat-Check-Fehler: {e}", is_critical=True)
 
     def start(self, update: Update, context: CallbackContext) -> None:
         """Start-Befehl Handler"""
@@ -521,9 +577,27 @@ class SolanaWalletBot:
         else:
             self.handle_text(update, context)
 
+    def notify_admin(self, message: str, is_critical: bool = False):
+        """Sendet eine Benachrichtigung an den Admin"""
+        try:
+            if not self.config.ADMIN_USER_ID:
+                logger.error("Admin User ID nicht konfiguriert")
+                return
+
+            prefix = "🚨 KRITISCH" if is_critical else "ℹ️ INFO"
+            admin_message = f"{prefix}: {message}\n\nZeitstempel: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+            if self.updater and self.updater.bot:
+                self.updater.bot.send_message(
+                    chat_id=self.config.ADMIN_USER_ID,
+                    text=admin_message
+                )
+                logger.info(f"Admin-Benachrichtigung gesendet: {message}")
+        except Exception as e:
+            logger.error(f"Fehler beim Senden der Admin-Benachrichtigung: {e}")
 
     def run(self):
-        """Startet den Bot"""
+        """Startet den Bot mit verbesserter Fehlertoleranz"""
         logger.info("Starte Bot...")
         try:
             # Lade gespeicherten Zustand
@@ -551,7 +625,7 @@ class SolanaWalletBot:
 
             # Callback und Message Handler
             dp.add_handler(CallbackQueryHandler(self.button_handler))
-            dp.add_handler(MessageHandler(Filters.all, self.handle_update)) #handles all updates
+            dp.add_handler(MessageHandler(Filters.all, self.handle_update))
 
             # Starte Komponenten
             self.dex_connector.initialize()
@@ -562,12 +636,27 @@ class SolanaWalletBot:
             )
             self.signal_generator.start()
 
-            # Starte Polling
-            self.updater.start_polling(timeout=30, drop_pending_updates=True)
-            logger.info("Bot ist bereit für Nachrichten")
+            # Konfiguriere Heartbeat
+            scheduler = BackgroundScheduler(timezone='UTC')
+            scheduler.add_job(self._send_heartbeat, 'interval', minutes=5)
+            scheduler.start()
 
-            # Halte Bot am Laufen
-            self.updater.idle()
+            # Starte Polling mit Retry-Mechanismus
+            retry_count = 0
+            max_retries = 3
+            while retry_count < max_retries:
+                try:
+                    self.updater.start_polling(timeout=30, drop_pending_updates=True)
+                    logger.info("Bot ist bereit für Nachrichten")
+                    self.updater.idle()
+                    break
+                except Exception as e:
+                    retry_count += 1
+                    logger.error(f"Start-Versuch {retry_count} fehlgeschlagen: {e}")
+                    if retry_count < max_retries:
+                        time.sleep(10 * retry_count)
+                    else:
+                        raise
 
         except Exception as e:
             logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
@@ -575,5 +664,10 @@ class SolanaWalletBot:
             raise
 
 if __name__ == "__main__":
-    bot = SolanaWalletBot()
-    bot.run()
+    while True:
+        try:
+            bot = SolanaWalletBot()
+            bot.run()
+        except Exception as e:
+            logger.critical(f"Bot-Ausführung fehlgeschlagen: {e}")
+            time.sleep(60)  # Warte eine Minute vor Neustart
