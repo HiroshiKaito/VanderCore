@@ -110,6 +110,10 @@ class AutomatedSignalGenerator:
             current_price = float(dex_market_info.get('price', 0))
             logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
 
+            # DEBUG: Prüfe aktive Nutzer
+            logger.info(f"Aktive Nutzer beim Signal Check: {len(self.bot.active_users)}")
+            logger.debug(f"Aktive Nutzer IDs: {self.bot.active_users}")
+
             # Aktualisiere Chart-Daten erneut für die aktuelle Analyse
             self.chart_analyzer.update_price_data(self.dex_connector, "SOL")
             if self.chart_analyzer.data.empty:
@@ -125,8 +129,11 @@ class AutomatedSignalGenerator:
             logger.info(f"Support/Resistance - Support: {support_resistance.get('support', 0):.2f}, "
                        f"Resistance: {support_resistance.get('resistance', 0):.2f}")
 
-            # Reduzierte Mindest-Trendstärke für mehr Signale
-            if trend_analysis.get('stärke', 0) >= 0.01:  # Reduziert von 0.03 auf 0.01
+            # Sehr niedrige Mindest-Trendstärke für häufigere Signale
+            min_strength = 0.005  # Reduziert von 0.01 auf 0.005 (0.5%)
+            trend_strength = trend_analysis.get('stärke', 0)
+
+            if trend_strength >= min_strength:
                 # Erstelle Signal basierend auf Analyse
                 signal = self._create_signal_from_analysis(
                     current_price, trend_analysis, support_resistance
@@ -137,25 +144,13 @@ class AutomatedSignalGenerator:
                     processed_signal = self.signal_processor.process_signal(signal)
                     if processed_signal:
                         logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
-                        if processed_signal['signal_quality'] >= 2:  # Reduziert von 3 auf 2
+                        if processed_signal['signal_quality'] >= 1:  # Reduziert von 2 auf 1
                             logger.info(f"Signal Details:"
                                       f"\n - Richtung: {processed_signal['direction']}"
                                       f"\n - Entry: {processed_signal['entry']:.2f}"
                                       f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
                                       f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
                                       f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
-
-                            # Versuche Chart zu generieren bevor das Signal gesendet wird
-                            chart_image = self.chart_analyzer.create_prediction_chart(
-                                entry_price=processed_signal['entry'],
-                                target_price=processed_signal['take_profit'],
-                                stop_loss=processed_signal['stop_loss']
-                            )
-
-                            if chart_image:
-                                logger.info("Chart erfolgreich generiert")
-                            else:
-                                logger.error("Chart konnte nicht generiert werden")
 
                             self._notify_users_about_signal(processed_signal)
                             self.total_signals_generated += 1
@@ -178,7 +173,7 @@ class AutomatedSignalGenerator:
                 else:
                     logger.info("Kein Signal basierend auf aktueller Analyse")
             else:
-                logger.info(f"Kein Signal - Trend zu schwach: {trend_analysis.get('trend')}, Stärke: {trend_analysis.get('stärke', 0)}%")
+                logger.info(f"Kein Signal - Trend zu schwach: {trend_analysis.get('trend')}, Stärke: {trend_strength}%")
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
