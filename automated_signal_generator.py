@@ -70,12 +70,12 @@ class AutomatedSignalGenerator:
             self.scheduler.add_job(
                 self.generate_signals,
                 'interval',
-                seconds=15,  # Auf 15 Sekunden reduziert für noch schnellere Reaktion
+                seconds=10,  # Reduziert von 15 auf 10 Sekunden für schnellere Signale
                 id='signal_generator'
             )
             self.scheduler.start()
             self.is_running = True
-            logger.info("Signal-Generator läuft jetzt im Hintergrund - Überprüfung alle 15 Sekunden")
+            logger.info("Signal-Generator läuft jetzt im Hintergrund - Überprüfung alle 10 Sekunden")
 
     def stop(self):
         """Stoppt den Signal-Generator"""
@@ -90,11 +90,6 @@ class AutomatedSignalGenerator:
         try:
             current_time = datetime.now(pytz.UTC)
             self.last_check_time = current_time
-
-            # Berechne Zeit seit letztem Signal
-            if self.last_signal_time:
-                time_since_last = (current_time - self.last_signal_time).total_seconds() / 60  # in Minuten
-                logger.info(f"Zeit seit letztem Signal: {time_since_last:.1f} Minuten")
 
             logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
 
@@ -170,7 +165,8 @@ class AutomatedSignalGenerator:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
 
-            if trend == 'neutral' or strength < 0.05:  # Reduziert auf 0.05% für mehr Signale
+            # Reduzierte Mindest-Trendstärke
+            if trend == 'neutral' or strength < 0.03:  # Reduziert von 0.05 auf 0.03
                 logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength}%")
                 return None
 
@@ -179,28 +175,26 @@ class AutomatedSignalGenerator:
             resistance = support_resistance.get('resistance', 0)
 
             # Dynamische Take-Profit-Berechnung basierend auf Trend
-            base_tp_percent = 0.015  # 1.5% Basis Take-Profit
+            base_tp_percent = 0.01  # Reduziert von 0.015 auf 0.01 (1%)
             # Erhöhe Take-Profit bei starkem Trend
             tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5))
             dynamic_tp_percent = base_tp_percent * tp_multiplier
 
             if trend == 'aufwärts':
                 entry = current_price
-                stop_loss = max(support, current_price * 0.995)  # 0.5% Stop Loss
-                # Berechne dynamisches Take-Profit, maximal bis zum Resistance-Level
+                stop_loss = max(support, current_price * 0.997)  # Reduziert auf 0.3%
                 take_profit = min(resistance, current_price * (1 + dynamic_tp_percent))
                 direction = 'long'
             else:  # abwärts
                 entry = current_price
-                stop_loss = min(resistance, current_price * 1.005)  # 0.5% Stop Loss
-                # Berechne dynamisches Take-Profit, maximal bis zum Support-Level
+                stop_loss = min(resistance, current_price * 1.003)  # Reduziert auf 0.3%
                 take_profit = max(support, current_price * (1 - dynamic_tp_percent))
                 direction = 'short'
 
             # Berechne erwarteten Profit
             expected_profit = abs((take_profit - entry) / entry * 100)
 
-            if expected_profit < 0.3:  # Reduziert auf 0.3% für mehr Signale
+            if expected_profit < 0.2:  # Reduziert auf 0.2% für mehr Signale
                 logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
                 return None
 
@@ -279,6 +273,9 @@ class AutomatedSignalGenerator:
     def _notify_users_about_signal(self, signal: Dict[str, Any]):
         """Benachrichtigt Benutzer über neue Trading-Signale"""
         try:
+            logger.info(f"Starte Benachrichtigung über neues Signal. Aktive Nutzer: {len(self.bot.active_users)}")
+            logger.debug(f"Aktive Nutzer IDs: {self.bot.active_users}")
+
             # Hole das aktuelle Wallet-Guthaben
             balance = self.bot.wallet_manager.get_balance()
 
@@ -307,6 +304,8 @@ class AutomatedSignalGenerator:
                 f"Schnell reagieren! Der Markt wartet nicht! 🚀"
             )
 
+            logger.info(f"Signal-Nachricht vorbereitet: {len(signal_message)} Zeichen")
+
             # Erstelle Inline-Buttons für die Benutzerinteraktion
             keyboard = [
                 [
@@ -316,8 +315,13 @@ class AutomatedSignalGenerator:
             ]
 
             # Sende Nachricht mit Chart an alle aktiven Bot-Benutzer
+            if not self.bot.active_users:
+                logger.warning("Keine aktiven Nutzer gefunden!")
+                return
+
             for user_id in self.bot.active_users:
                 try:
+                    logger.info(f"Versuche Signal an User {user_id} zu senden...")
                     # Sende zuerst das Chart-Bild
                     if chart_image:
                         logger.info(f"Sende Prediction Chart an User {user_id}...")

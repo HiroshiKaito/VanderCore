@@ -15,6 +15,9 @@ class SignalProcessor:
     def process_signal(self, signal_data: Dict[str, Any]) -> Dict[str, Any]:
         """Verarbeitet ein eingehendes Trading Signal"""
         try:
+            logger.info("Verarbeite neues Trading Signal")
+            logger.debug(f"Signal Daten: {signal_data}")
+
             # Chart-Analyse durchführen
             self.chart_analyzer.update_price_data(signal_data.get('dex_connector'), signal_data.get('token_address'))
             trend_analysis = self.chart_analyzer.analyze_trend()
@@ -46,19 +49,28 @@ class SignalProcessor:
                 'risk_score': risk_score,
                 'risk_recommendations': risk_recommendations,
                 'signal_quality': self._calculate_signal_quality(
-                    trend_analysis, 
-                    risk_score, 
+                    trend_analysis,
+                    risk_score,
                     expected_profit_percent
                 )
             }
 
-            # Filtere nur hochwertige Signale
-            if processed_signal['signal_quality'] >= 7:
+            logger.info(f"Signal verarbeitet - Details:"
+                       f"\n - Pair: {processed_signal['pair']}"
+                       f"\n - Richtung: {processed_signal['direction']}"
+                       f"\n - Qualität: {processed_signal['signal_quality']}/10"
+                       f"\n - Trend: {processed_signal['trend']}"
+                       f"\n - Trendstärke: {processed_signal['trend_strength']:.2f}")
+
+            # Reduziere die Qualitätsschwelle für mehr Signale
+            if processed_signal['signal_quality'] >= 3:  # Weiter reduziert von 4 auf 3
                 self.active_signals.append(processed_signal)
-                logger.info(f"Hochwertiges Signal verarbeitet: {processed_signal['pair']}")
+                logger.info(f"Hochwertiges Signal verarbeitet: {processed_signal['pair']} "
+                           f"(Qualität: {processed_signal['signal_quality']}/10)")
                 return processed_signal
             else:
-                logger.info(f"Signal verworfen (niedrige Qualität): {processed_signal['pair']}")
+                logger.info(f"Signal verworfen (niedrige Qualität): {processed_signal['pair']} "
+                           f"(Qualität: {processed_signal['signal_quality']}/10)")
                 return {}
 
         except Exception as e:
@@ -82,47 +94,39 @@ class SignalProcessor:
         """Markiert ein Signal als ausgeführt"""
         if 0 <= signal_id < len(self.active_signals):
             self.active_signals[signal_id]['status'] = 'ausgeführt'
+            logger.info(f"Signal {signal_id} als ausgeführt markiert")
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any], 
-                               risk_score: float, 
-                               expected_profit: float) -> float:
+                                 risk_score: float, 
+                                 expected_profit: float) -> float:
         """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
             # Grundlegende Trend-Bewertung
             trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
 
-            # Trendstärke-Bewertung
-            strength_score = min(trend_analysis['stärke'] * 30, 10)  # Erhöhte Sensitivität
+            # Trendstärke-Bewertung - Erhöhte Sensitivität
+            strength_score = min(trend_analysis['stärke'] * 40, 10)  # Erhöht von 30 auf 40
 
-            # Profit-Bewertung - Progressive Skala
-            if expected_profit <= 1.0:
-                profit_score = expected_profit * 5  # 0.5% = 2.5 Punkte
-            elif expected_profit <= 2.0:
-                profit_score = 5 + (expected_profit - 1.0) * 3  # 1.5% = 6.5 Punkte
+            # Profit-Bewertung - Angepasste Progressive Skala
+            if expected_profit <= 0.5:  # Reduziert von 1.0 auf 0.5
+                profit_score = expected_profit * 10  # Erhöht von 5 auf 10
+            elif expected_profit <= 1.0:  # Reduziert von 2.0 auf 1.0
+                profit_score = 5 + (expected_profit - 0.5) * 6  # Angepasste Berechnung
             else:
-                profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
+                profit_score = 8 + (min(expected_profit - 1.0, 2.0))
 
-            # Risiko-Score (0-10, wobei 10 das niedrigste Risiko ist)
-            risk_score = (1 - risk_score) * 10
-
-            # Gewichtete Summe
-            weights = (0.3, 0.2, 0.3, 0.2)  # Ausgeglichene Gewichtung
+            # Gewichtete Summe mit angepassten Gewichten
+            weights = (0.3, 0.4, 0.3)  # Mehr Gewicht auf Trendstärke
             quality = (
                 trend_base * weights[0] +          # Trend-Basis
                 strength_score * weights[1] +      # Trendstärke
-                profit_score * weights[2] +        # Profit-Potenzial
-                risk_score * weights[3]            # Risiko-Score
+                profit_score * weights[2]          # Profit-Potenzial
             )
-
-            # Bonus für besonders starke Signale mit niedrigem Risiko
-            if strength_score > 8 and risk_score > 8:
-                quality *= 1.1  # 10% Bonus
 
             logger.debug(f"Signal Qualitätsberechnung:"
                         f"\n - Trend Score: {trend_base:.1f} (Gewicht: {weights[0]:.1f})"
                         f"\n - Strength Score: {strength_score:.1f} (Gewicht: {weights[1]:.1f})"
                         f"\n - Profit Score: {profit_score:.1f} (Gewicht: {weights[2]:.1f})"
-                        f"\n - Risk Score: {risk_score:.1f} (Gewicht: {weights[3]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
             return round(min(quality, 10), 1)

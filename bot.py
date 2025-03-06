@@ -207,10 +207,16 @@ class SolanaWalletBot:
 
     def handle_update(self, update: Update, context: CallbackContext):
         """Zentrale Update-Behandlung mit Wartungsmodus-Check"""
+        if not update.effective_user:
+            logger.warning("Update ohne effektiven Benutzer empfangen")
+            return
+
         user_id = update.effective_user.id
+        logger.info(f"Update von User {user_id} empfangen")
 
         # Füge Nutzer zu aktiven Nutzern hinzu
         self.active_users.add(user_id)
+        logger.debug(f"Aktive Nutzer aktualisiert: {len(self.active_users)} Nutzer")
 
         # Prüfe Wartungsmodus
         if self.maintenance_mode and str(user_id) != str(self.config.ADMIN_USER_ID):
@@ -221,12 +227,13 @@ class SolanaWalletBot:
             return
 
         # Normale Kommando-Verarbeitung
-        message = update.message.text if update.message else None
-        if message:
-            if message.startswith('/'):
-                self.handle_command(update, context)
-            else:
-                self.handle_text(update, context)
+        if update.message:
+            message = update.message.text
+            if message:
+                if message.startswith('/'):
+                    self.handle_command(update, context)
+                else:
+                    self.handle_text(update, context)
         elif update.callback_query:
             self.button_handler(update, context)
 
@@ -582,6 +589,10 @@ class SolanaWalletBot:
                         parse_mode='Markdown'
                     )
 
+                    # Füge den Benutzer zu aktiven Nutzern hinzu
+                    self.active_users.add(user_id)
+                    logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
+
                     # Neue motivierende Nachricht mit Button
                     query.message.reply_text(
                         "🎯 Sehr gut! Lass uns nach profitablen Trading-Signalen suchen!\n\n"
@@ -596,11 +607,24 @@ class SolanaWalletBot:
                     query.message.reply_text("❌ Fehler beim Erstellen der Wallet!")
 
             elif query.data == "start_signal_search":
+                # Initialisiere und starte den Signal Generator
+                if not self.signal_generator:
+                    logger.info("Initialisiere Signal Generator...")
+                    self.signal_generator = AutomatedSignalGenerator(
+                        self.dex_connector,
+                        self.signal_processor,
+                        self
+                    )
+                    self.signal_generator.start()
+                    logger.info("Signal Generator erfolgreich gestartet")
+
+                # Bestätige die Aktivierung der Signal-Suche
                 query.message.reply_text(
                     "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
                     "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n"
                     "Die Signale kannst du auch jederzeit mit /signal abrufen."
                 )
+                logger.info(f"Signal-Suche für User {user_id} aktiviert")
 
             elif query.data == "ignore_signal":
                 query.message.reply_text(
@@ -634,8 +658,38 @@ class SolanaWalletBot:
             self.exit_maintenance_mode(update, context)
         elif command == '/test_admin' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
             self.test_admin_notification(update, context)
+        elif command == '/test_signal' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.test_signal(update, context)
         else:
             self.handle_text(update, context)
+
+    def test_signal(self, update: Update, context: CallbackContext):
+        logger.info("Test-Signal wird generiert...")
+        try:
+            # Erstelle ein Test-Signal
+            test_signal = {
+                'pair': 'SOL/USD',
+                'direction': 'long',
+                'entry': 145.50,
+                'stop_loss': 144.50,
+                'take_profit': 147.50,
+                'timestamp': datetime.now().timestamp(),
+                'dex_connector': self.dex_connector,
+                'token_address': "SOL",
+                'expected_profit': 1.37,
+                'signal_quality': 7.5,
+                'trend_strength': 0.8,
+            }
+
+            # Verarbeite das Signal
+            processed_signal = self.signal_processor.process_signal(test_signal)
+            if processed_signal:
+                update.message.reply_text("✅ Test-Signal erfolgreich generiert und verarbeitet!")
+            else:
+                update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
+        except Exception as e:
+            logger.error(f"Fehler beim Generieren des Test-Signals: {e}")
+            update.message.reply_text("❌ Fehler beim Generieren des Test-Signals")
 
     def notify_admin(self, message: str, is_critical: bool = False):
         """Sendet eine Benachrichtigung an den Admin als private Nachricht"""
@@ -713,6 +767,7 @@ class SolanaWalletBot:
             dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
             dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
             dp.add_handler(CommandHandler("test_admin", self.test_admin_notification))
+            dp.add_handler(CommandHandler("test_signal", self.test_signal))
 
             # Callback und Message Handler
             dp.add_handler(CallbackQueryHandler(self.button_handler))
