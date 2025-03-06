@@ -664,44 +664,51 @@ class SolanaWalletBot:
                 'stop_loss': 144.50,
                 'take_profit': 147.50,
                 'timestamp': datetime.now().timestamp(),
-                'dex_connector': self.dex_connector,
                 'token_address': "SOL",
                 'expected_profit': 1.37,
                 'signal_quality': 7.5,
                 'trend_strength': 0.8,
             }
 
-            # Verarbeite das Signal
-            logger.info("Verarbeite Test-Signal...")
-            processed_signal = self.signal_processor.process_signal(test_signal)
-            if processed_signal:
-                signal_message = (
-                    f"🎯 Trading Signal erkannt!\n\n"
-                    f"Pair: {processed_signal['pair']}\n"
-                    f"Position: {'📈 LONG' if processed_signal['direction'] == 'long' else '📉 SHORT'}\n"
-                    f"Entry: {processed_signal['entry']:.2f} USDC\n"
-                    f"Stop Loss: {processed_signal['stop_loss']:.2f} USDC\n"
-                    f"Take Profit: {processed_signal['take_profit']:.2f} USDC\n"
-                    f"Erwarteter Profit: {processed_signal['expected_profit']:.1f}%\n"
-                    f"Signal Qualität: {processed_signal['signal_quality']:.1f}/10\n"
-                    f"Trend Stärke: {processed_signal['trend_strength']:.2f}"
-                )
+            logger.info(f"Test-Signal erstellt: {test_signal}")
 
-                keyboard = [
-                    [
-                        InlineKeyboardButton("✅ Signal handeln", callback_data="trade_signal_new"),
-                        InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+            try:
+                # Verarbeite das Signal
+                logger.info("Verarbeite Test-Signal...")
+                processed_signal = self.signal_processor.process_signal(test_signal)
+                if processed_signal:
+                    signal_message = (
+                        f"🎯 Trading Signal erkannt!\n\n"
+                        f"Pair: {processed_signal['pair']}\n"
+                        f"Position: {'📈 LONG' if processed_signal['direction'] == 'long' else '📉 SHORT'}\n"
+                        f"Entry: {processed_signal['entry']:.2f} USDC\n"
+                        f"Stop Loss: {processed_signal['stop_loss']:.2f} USDC\n"
+                        f"Take Profit: {processed_signal['take_profit']:.2f} USDC\n"
+                        f"Erwarteter Profit: {processed_signal['expected_profit']:.1f}%\n"
+                        f"Signal Qualität: {processed_signal['signal_quality']:.1f}/10\n"
+                        f"Trend Stärke: {processed_signal['trend_strength']:.2f}"
+                    )
+
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ Signal handeln", callback_data="trade_signal_new"),
+                            InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+                        ]
                     ]
-                ]
 
-                update.message.reply_text(
-                    signal_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-                logger.info("Test-Signal erfolgreich gesendet")
-            else:
-                logger.error("Signal konnte nicht verarbeitet werden")
-                update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
+                    logger.info("Sende Test-Signal an Benutzer...")
+                    update.message.reply_text(
+                        signal_message,
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                    logger.info("Test-Signal erfolgreich gesendet")
+                else:
+                    logger.error("Signal konnte nicht verarbeitet werden")
+                    update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
+            except Exception as process_error:
+                logger.error(f"Fehler bei der Signal-Verarbeitung: {process_error}")
+                update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung. Bitte versuchen Sie es später erneut.")
+
         except Exception as e:
             logger.error(f"Fehler beim Generieren des Test-Signals: {e}")
             update.message.reply_text("❌ Fehler beim Generieren des Test-Signals")
