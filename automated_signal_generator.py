@@ -194,8 +194,8 @@ class AutomatedSignalGenerator:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
 
-            # Reduzierte Mindest-Trendstärke
-            if trend == 'neutral' or strength < 0.03:  # Reduziert von 0.05 auf 0.03
+            # Stark reduzierte Mindest-Trendstärke für häufigere Signale
+            if trend == 'neutral' or strength < 0.01:  # Reduziert von 0.03 auf 0.01
                 logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength}%")
                 return None
 
@@ -204,26 +204,27 @@ class AutomatedSignalGenerator:
             resistance = support_resistance.get('resistance', 0)
 
             # Dynamische Take-Profit-Berechnung basierend auf Trend
-            base_tp_percent = 0.01  # Reduziert von 0.015 auf 0.01 (1%)
+            base_tp_percent = 0.005  # Reduziert von 0.01 auf 0.005 (0.5%)
             # Erhöhe Take-Profit bei starkem Trend
-            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5))
+            tp_multiplier = min(2.0, 1.0 + (strength / 100 * 3))
             dynamic_tp_percent = base_tp_percent * tp_multiplier
 
             if trend == 'aufwärts':
                 entry = current_price
-                stop_loss = max(support, current_price * 0.997)  # Reduziert auf 0.3%
+                stop_loss = max(support, current_price * 0.998)  # Reduziert auf 0.2%
                 take_profit = min(resistance, current_price * (1 + dynamic_tp_percent))
                 direction = 'long'
             else:  # abwärts
                 entry = current_price
-                stop_loss = min(resistance, current_price * 1.003)  # Reduziert auf 0.3%
+                stop_loss = min(resistance, current_price * 1.002)  # Reduziert auf 0.2%
                 take_profit = max(support, current_price * (1 - dynamic_tp_percent))
                 direction = 'short'
 
             # Berechne erwarteten Profit
             expected_profit = abs((take_profit - entry) / entry * 100)
 
-            if expected_profit < 0.2:  # Reduziert auf 0.2% für mehr Signale
+            # Reduzierter Mindest-Profit
+            if expected_profit < 0.1:  # Reduziert auf 0.1% für mehr Signale
                 logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
                 return None
 
@@ -231,7 +232,7 @@ class AutomatedSignalGenerator:
                 trend_analysis, strength, expected_profit
             )
 
-            if signal_quality < 3:  # Reduziert auf 3 für mehr Signale
+            if signal_quality < 2:  # Reduziert auf 2 für mehr Signale
                 logger.info(f"Kein Signal - Qualität zu niedrig: {signal_quality}/10")
                 return None
 
