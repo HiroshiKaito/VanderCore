@@ -383,10 +383,6 @@ class SolanaWalletBot:
             logger.info(f"Starte Signal Generator für User {user_id}")
             self.signal_generator.start()
 
-            # Sende Test-Signal um zu verifizieren
-            logger.info("Sende Test-Signal zur Verifizierung...")
-            self.test_signal(update, context)
-
             logger.info(f"Start-Befehl für User {user_id} erfolgreich verarbeitet")
 
         except Exception as e:
