@@ -753,18 +753,23 @@ class SolanaWalletBot:
             dp = self.updater.dispatcher
 
             # Registriere Handler
-            dp.add_handler(CommandHandler("start", self.start))
-            dp.add_handler(CommandHandler("hilfe", self.help_command))
-            dp.add_handler(CommandHandler("wallet", self.wallet_command))
-            dp.add_handler(CommandHandler("senden", self.send_command))
-            dp.add_handler(CommandHandler("empfangen", self.receive_command))
-            dp.add_handler(CommandHandler("trades", self.handle_trades_command))
-            dp.add_handler(CommandHandler("test_signal", self.test_signal))
-            dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
-            dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
+            handlers = [
+                CommandHandler("start", self.start),
+                CommandHandler("hilfe", self.help_command),
+                CommandHandler("wallet", self.wallet_command),
+                CommandHandler("senden", self.send_command),
+                CommandHandler("empfangen", self.receive_command),
+                CommandHandler("trades", self.handle_trades_command),
+                CommandHandler("test_signal", self.test_signal),
+                CommandHandler("wartung_start", self.enter_maintenance_mode),
+                CommandHandler("wartung_ende", self.exit_maintenance_mode),
+                CallbackQueryHandler(self.button_handler),
+                MessageHandler(Filters.text & ~Filters.command, self.handle_text)
+            ]
 
-            # Füge Callback Query Handler hinzu
-            dp.add_handler(CallbackQueryHandler(self.button_handler))
+            for handler in handlers:
+                dp.add_handler(handler)
+                logger.debug(f"Handler registriert: {handler.__class__.__name__}")
 
             # Füge Error Handler hinzu
             dp.add_error_handler(self.error_handler)
