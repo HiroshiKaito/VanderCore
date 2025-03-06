@@ -336,6 +336,10 @@ class SolanaWalletBot:
         logger.info(f"Start-Befehl von User {user_id}")
 
         try:
+            # Füge Benutzer zu aktiven Nutzern hinzu
+            self.active_users.add(user_id)
+            logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
+
             logger.debug(f"Sende Start-Nachricht an User {user_id}")
             update.message.reply_text(
                 "👋 Hey! Ich bin Dexter - der beste Solana Trading Bot auf dem Markt!\n\n"
@@ -356,6 +360,12 @@ class SolanaWalletBot:
                 ])
             )
             logger.debug("Start-Nachricht erfolgreich gesendet")
+
+            # Aktiviere automatische Signal-Generierung für den neuen Benutzer
+            if self.signal_generator:
+                logger.info(f"Aktiviere Signal-Generierung für User {user_id}")
+                self.signal_generator.add_user(user_id)
+
         except Exception as e:
             logger.error(f"Fehler beim Senden der Start-Nachricht: {e}")
 
@@ -773,6 +783,16 @@ class SolanaWalletBot:
 
             # Füge Error Handler hinzu
             dp.add_error_handler(self.error_handler)
+
+            # Initialisiere und starte Signal Generator
+            logger.info("Initialisiere Signal Generator...")
+            self.signal_generator = AutomatedSignalGenerator(
+                self.dex_connector,
+                self.signal_processor,
+                self
+            )
+            self.signal_generator.start()
+            logger.info("Signal Generator erfolgreich gestartet")
 
             # Starte Flask im Hintergrund
             threading.Thread(target=run_flask, daemon=True).start()
