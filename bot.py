@@ -10,6 +10,8 @@ from telegram.ext import (
 )
 from telegram.error import Conflict, NetworkError, TelegramError
 from datetime import datetime
+import json
+import os
 from config import Config
 from wallet_manager import WalletManager
 from utils import format_amount, validate_amount, format_wallet_info
@@ -17,11 +19,10 @@ from signal_processor import SignalProcessor
 from dex_connector import DexConnector
 from automated_signal_generator import AutomatedSignalGenerator
 
-
 # Logging Setup mit detailliertem Format
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG  # Debug-Level für mehr Details
+    level=logging.DEBUG
 )
 logger = logging.getLogger(__name__)
 
@@ -31,27 +32,173 @@ class SolanaWalletBot:
         logger.info("Initialisiere Bot...")
         self.config = Config()
 
-        # Überprüfe Token-Format (nur die ersten 10 Zeichen für Sicherheit)
+        # Überprüfe Token-Format
         if not self.config.TELEGRAM_TOKEN:
             logger.error("TELEGRAM_TOKEN nicht gefunden!")
             raise ValueError("TELEGRAM_TOKEN muss gesetzt sein!")
-        else:
-            token_prefix = self.config.TELEGRAM_TOKEN[:10] + "..."
-            logger.info(f"Bot Token gefunden (Prefix: {token_prefix})")
-            logger.info(f"Admin User ID konfiguriert: {self.config.ADMIN_USER_ID}")
 
+        # Bot-Status
+        self.maintenance_mode = False
+        self.update_in_progress = False
+        self.active_users = set()
+        self.pending_operations = {}
+
+        # Komponenten
         self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
         self.updater = None
+        self.dex_connector = DexConnector()
+        self.signal_processor = SignalProcessor()
+        self.signal_generator = None
+
+        # Status Tracking
         self.waiting_for_address = {}
         self.waiting_for_trade_amount = False
 
-        # Initialize DexConnector and SignalProcessor
-        self.dex_connector = DexConnector()
-        self.signal_processor = SignalProcessor()
-
-        # Initialize AutomatedSignalGenerator
-        self.signal_generator = None  # Will be initialized after updater
         logger.info("Bot erfolgreich initialisiert")
+
+    def enter_maintenance_mode(self, update: Update, context: CallbackContext):
+        """Aktiviert den Wartungsmodus"""
+        if str(update.effective_user.id) != str(self.config.ADMIN_USER_ID):
+            update.message.reply_text("❌ Nur Administratoren können diese Aktion ausführen.")
+            return
+
+        self.maintenance_mode = True
+
+        # Benachrichtige alle aktiven Nutzer
+        maintenance_message = (
+            "🔧 Wartungsarbeiten angekündigt!\n\n"
+            "Der Bot wird in Kürze aktualisiert. "
+            "Ihre offenen Trades und Signale bleiben erhalten.\n"
+            "Wir informieren Sie, sobald die Wartung abgeschlossen ist."
+        )
+
+        for user_id in self.active_users:
+            try:
+                context.bot.send_message(
+                    chat_id=user_id,
+                    text=maintenance_message
+                )
+            except Exception as e:
+                logger.error(f"Fehler beim Senden der Wartungsnachricht an User {user_id}: {e}")
+
+        update.message.reply_text("✅ Wartungsmodus aktiviert. Neue Anfragen werden pausiert.")
+        logger.info("Wartungsmodus aktiviert")
+
+    def exit_maintenance_mode(self, update: Update, context: CallbackContext):
+        """Deaktiviert den Wartungsmodus"""
+        if str(update.effective_user.id) != str(self.config.ADMIN_USER_ID):
+            update.message.reply_text("❌ Nur Administratoren können diese Aktion ausführen.")
+            return
+
+        self.maintenance_mode = False
+
+        # Benachrichtige alle aktiven Nutzer
+        completion_message = (
+            "✅ Wartungsarbeiten abgeschlossen!\n\n"
+            "Der Bot ist wieder vollständig verfügbar.\n"
+            "Alle Ihre Trades und Signale sind weiterhin aktiv."
+        )
+
+        for user_id in self.active_users:
+            try:
+                context.bot.send_message(
+                    chat_id=user_id,
+                    text=completion_message
+                )
+            except Exception as e:
+                logger.error(f"Fehler beim Senden der Abschlussnachricht an User {user_id}: {e}")
+
+        update.message.reply_text("✅ Wartungsmodus deaktiviert. Bot ist wieder voll verfügbar.")
+        logger.info("Wartungsmodus deaktiviert")
+
+    def save_state(self):
+        """Speichert den aktuellen Bot-Zustand"""
+        try:
+            state = {
+                'active_users': list(self.active_users),
+                'pending_operations': self.pending_operations,
+                'signals': self.signal_processor.get_active_signals(),
+                'timestamp': datetime.now().isoformat()
+            }
+
+            with open('bot_state.json', 'w') as f:
+                json.dump(state, f)
+            logger.info("Bot-Zustand erfolgreich gespeichert")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern des Bot-Zustands: {e}")
+
+    def load_state(self):
+        """Lädt den gespeicherten Bot-Zustand"""
+        try:
+            if os.path.exists('bot_state.json'):
+                with open('bot_state.json', 'r') as f:
+                    state = json.load(f)
+
+                self.active_users = set(state.get('active_users', []))
+                self.pending_operations = state.get('pending_operations', {})
+
+                # Stelle aktive Signale wieder her
+                for signal in state.get('signals', []):
+                    self.signal_processor.process_signal(signal)
+
+                logger.info("Bot-Zustand erfolgreich geladen")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Laden des Bot-Zustands: {e}")
+
+    def graceful_shutdown(self):
+        """Führt einen kontrollierten Shutdown durch"""
+        try:
+            logger.info("Starte kontrollierten Shutdown...")
+
+            # Speichere aktuellen Zustand
+            self.save_state()
+
+            # Stoppe Signal Generator
+            if self.signal_generator:
+                self.signal_generator.stop()
+                logger.info("Signal Generator gestoppt")
+
+            # Beende alle aktiven API-Verbindungen
+            self.dex_connector.close()
+            logger.info("DEX Verbindungen geschlossen")
+
+            # Stoppe den Updater
+            if self.updater:
+                self.updater.stop()
+                logger.info("Updater gestoppt")
+
+            logger.info("Kontrollierter Shutdown abgeschlossen")
+
+        except Exception as e:
+            logger.error(f"Fehler beim kontrollierten Shutdown: {e}")
+
+    def handle_update(self, update: Update, context: CallbackContext):
+        """Zentrale Update-Behandlung mit Wartungsmodus-Check"""
+        user_id = update.effective_user.id
+
+        # Füge Nutzer zu aktiven Nutzern hinzu
+        self.active_users.add(user_id)
+
+        # Prüfe Wartungsmodus
+        if self.maintenance_mode and str(user_id) != str(self.config.ADMIN_USER_ID):
+            update.message.reply_text(
+                "🔧 Der Bot befindet sich aktuell im Wartungsmodus.\n"
+                "Bitte versuchen Sie es später erneut."
+            )
+            return
+
+        # Normale Kommando-Verarbeitung
+        message = update.message.text if update.message else None
+        if message:
+            if message.startswith('/'):
+                self.handle_command(update, context)
+            else:
+                self.handle_text(update, context)
+        elif update.callback_query:
+            self.button_handler(update, context)
+
 
     def error_handler(self, update: object, context: CallbackContext) -> None:
         """Verbesserte Fehlerbehandlung"""
@@ -350,37 +497,46 @@ class SolanaWalletBot:
             logger.error(f"Fehler im Button Handler: {e}")
             query.message.reply_text("❌ Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.")
 
+    def handle_command(self, update: Update, context: CallbackContext):
+        command = update.message.text.split()[0]
+
+        if command == '/start':
+            self.start(update, context)
+        elif command == '/hilfe':
+            self.help_command(update, context)
+        elif command == '/wallet':
+            self.wallet_command(update, context)
+        elif command == '/senden':
+            self.send_command(update, context)
+        elif command == '/empfangen':
+            self.receive_command(update, context)
+        elif command == '/signal':
+            self.handle_signal_command(update, context)
+        elif command == '/trades':
+            self.handle_trades_command(update, context)
+        elif command == '/wartung_start' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.enter_maintenance_mode(update, context)
+        elif command == '/wartung_ende' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.exit_maintenance_mode(update, context)
+        else:
+            self.handle_text(update, context)
+
+
     def run(self):
         """Startet den Bot"""
-        logger.info("Starting bot...")
+        logger.info("Starte Bot...")
         try:
-            # Initialize updater with bot's token
-            logger.debug(f"Versuche Bot mit Token zu initialisieren...")
+            # Lade gespeicherten Zustand
+            self.load_state()
+
+            # Initialisiere Updater
             self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
-            logger.debug("Updater initialisiert")
-
-            # Initialize DEX connection
-            self.dex_connector.initialize()
-
-            # Initialize and start signal generator
-            self.signal_generator = AutomatedSignalGenerator(
-                self.dex_connector,
-                self.signal_processor,
-                self
-            )
-            self.signal_generator.start()
-            logger.info("Automatischer Signal-Generator gestartet")
-
-            # Get the dispatcher to register handlers
             dp = self.updater.dispatcher
-            logger.debug("Dispatcher erhalten")
 
-            # Add error handler
+            # Registriere Handler
             dp.add_error_handler(self.error_handler)
-            logger.debug("Error Handler registriert")
 
-            # Command handlers
-            logger.debug("Registriere Command Handler...")
+            # Basis-Kommandos
             dp.add_handler(CommandHandler("start", self.start))
             dp.add_handler(CommandHandler("hilfe", self.help_command))
             dp.add_handler(CommandHandler("wallet", self.wallet_command))
@@ -388,32 +544,34 @@ class SolanaWalletBot:
             dp.add_handler(CommandHandler("empfangen", self.receive_command))
             dp.add_handler(CommandHandler("signal", self.handle_signal_command))
             dp.add_handler(CommandHandler("trades", self.handle_trades_command))
-            logger.debug("Command Handler registriert")
 
-            # Callback query handler
+            # Admin-Kommandos
+            dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
+            dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
+
+            # Callback und Message Handler
             dp.add_handler(CallbackQueryHandler(self.button_handler))
-            logger.debug("Callback Query Handler registriert")
+            dp.add_handler(MessageHandler(Filters.all, self.handle_update)) #handles all updates
 
-            # Message handler for text
-            dp.add_handler(MessageHandler(Filters.text & ~Filters.command, self.handle_text))
-            logger.debug("Text Message Handler registriert")
+            # Starte Komponenten
+            self.dex_connector.initialize()
+            self.signal_generator = AutomatedSignalGenerator(
+                self.dex_connector,
+                self.signal_processor,
+                self
+            )
+            self.signal_generator.start()
 
-            # Log all registered handlers
-            handlers = [handler.__class__.__name__ for handler in dp.handlers[0]]
-            logger.info(f"Registrierte Handler: {handlers}")
-
-            # Start the Bot
-            logger.info("Bot startet Polling...")
+            # Starte Polling
             self.updater.start_polling(timeout=30, drop_pending_updates=True)
             logger.info("Bot ist bereit für Nachrichten")
 
-            # Run the bot until you press Ctrl-C
+            # Halte Bot am Laufen
             self.updater.idle()
 
         except Exception as e:
             logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
-            if self.signal_generator:
-                self.signal_generator.stop()
+            self.graceful_shutdown()
             raise
 
 if __name__ == "__main__":

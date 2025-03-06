@@ -31,6 +31,14 @@ class AITradingEngine:
 
         logger.info("KI-Trading-Engine initialisiert mit scikit-learn")
 
+    def _init_model(self):
+        """Initialisiert das ML-Modell"""
+        self.model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
+
     def prepare_features(self, price_data: pd.DataFrame) -> np.ndarray:
         """Bereitet Features für das ML-Modell vor"""
         try:
@@ -68,11 +76,7 @@ class AITradingEngine:
     def _build_model(self):
         """Erstellt das Random Forest Modell"""
         try:
-            self.model = RandomForestRegressor(
-                n_estimators=100,
-                max_depth=10,
-                random_state=42
-            )
+            self._init_model()
             logger.info("Random Forest Modell erfolgreich erstellt")
 
         except Exception as e:
@@ -205,8 +209,7 @@ class AITradingEngine:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (compatible; SolanaBot/1.0)',
                 'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'X-API-KEY': ''  # DEX Screener public API doesn't require a key
+                'Content-Type': 'application/json'
             }
 
             # CoinGecko Daten mit Rate Limiting und Retry
@@ -229,50 +232,76 @@ class AITradingEngine:
 
             # DEX Screener Daten
             try:
-                # DEX Screener API Endpoint für Solana Pairs
-                dex_url = f"{self.dex_screener_api}/pairs"
-                params = {
-                    'chainId': 'solana',
-                    'q': self.sol_token_address
-                }
+                # Versuche zuerst den Token-spezifischen Endpoint
+                logger.info(f"Versuche Token-spezifischen DEX Screener API Aufruf für SOL")
+                token_url = f"{self.dex_screener_api}/pairs/solana/{self.sol_token_address}"
 
-                logger.info(f"Versuche DEX Screener API Aufruf: {dex_url} mit Parametern: {params}")
-                response = requests.get(dex_url, params=params, headers=headers, timeout=15)
+                response = requests.get(token_url, headers=headers, timeout=15)
+                response_text = response.text if response.status_code != 200 else "OK"
+                logger.info(f"DEX Screener Response Status: {response.status_code}, Response: {response_text}")
 
                 if response.status_code == 200:
-                    api_response = response.json()
-                    logger.info(f"DEX Screener Rohdaten: {api_response}")
+                    token_data = response.json()
+                    if 'pairs' in token_data:
+                        # Filter für USDC Paare
+                        usdc_pairs = [
+                            pair for pair in token_data['pairs']
+                            if pair.get('quoteToken', {}).get('symbol', '').upper() == 'USDC'
+                        ]
 
-                    if 'pairs' in api_response:
-                        # Filtere relevante SOL/USDC Paare
+                        if usdc_pairs:
+                            # Sortiere nach Volumen
+                            usdc_pairs.sort(key=lambda x: float(x.get('volume', {}).get('h24', 0)), reverse=True)
+                            best_pair = usdc_pairs[0]
+
+                            data['dex_screener'] = {
+                                'pair': best_pair,
+                                'price': float(best_pair.get('priceUsd', 0)),
+                                'volume24h': float(best_pair.get('volume', {}).get('h24', 0)),
+                                'timestamp': datetime.now().isoformat()
+                            }
+                            logger.info(f"DEX Screener: SOL/USDC Pair gefunden - "
+                                      f"Preis: ${data['dex_screener']['price']:.2f}, "
+                                      f"24h Volume: ${data['dex_screener']['volume24h']:,.2f}")
+                            return data
+
+                # Wenn der erste Versuch fehlschlägt, versuche den trending pairs endpoint
+                logger.info("Versuche trending pairs endpoint als Fallback")
+                pairs_url = f"{self.dex_screener_api}/pairs/trending"
+                response = requests.get(pairs_url, headers=headers, timeout=15)
+
+                if response.status_code == 200:
+                    pairs_data = response.json()
+                    if 'pairs' in pairs_data:
                         sol_pairs = [
-                            pair for pair in api_response['pairs']
-                            if (pair.get('baseToken', {}).get('address', '').lower() == self.sol_token_address.lower() or
-                                'sol' in pair.get('baseToken', {}).get('symbol', '').lower())
+                            pair for pair in pairs_data['pairs']
+                            if (pair.get('baseToken', {}).get('symbol', '').upper() == 'SOL' or
+                                pair.get('baseToken', {}).get('address', '').lower() == self.sol_token_address.lower())
+                            and pair.get('quoteToken', {}).get('symbol', '').upper() == 'USDC'
+                            and pair.get('chainId') == 'solana'
                         ]
 
                         if sol_pairs:
-                            # Sortiere nach Handelsvolumen
-                            sol_pairs.sort(key=lambda x: float(x.get('volume', {}).get('h24', 0)), reverse=True)
+                            best_pair = max(sol_pairs, key=lambda x: float(x.get('volume', {}).get('h24', 0)))
                             data['dex_screener'] = {
-                                'pairs': sol_pairs,
+                                'pair': best_pair,
+                                'price': float(best_pair.get('priceUsd', 0)),
+                                'volume24h': float(best_pair.get('volume', {}).get('h24', 0)),
                                 'timestamp': datetime.now().isoformat()
                             }
-                            logger.info(f"DEX Screener: {len(sol_pairs)} SOL Paare gefunden")
-                            logger.info(f"Bestes Pair: {sol_pairs[0].get('pairAddress')} mit 24h Volume: {sol_pairs[0].get('volume', {}).get('h24', '0')} USD")
+                            logger.info(f"DEX Screener (Trending): SOL/USDC Pair gefunden - "
+                                      f"Preis: ${data['dex_screener']['price']:.2f}, "
+                                      f"24h Volume: ${data['dex_screener']['volume24h']:,.2f}")
                         else:
-                            logger.warning("DEX Screener: Keine SOL Paare gefunden")
+                            logger.warning("Keine SOL/USDC Paare in trending pairs gefunden")
                             data['dex_screener'] = await self._get_solana_rpc_fallback()
                     else:
-                        logger.warning(f"DEX Screener: Unerwartetes Response Format: {api_response}")
+                        logger.warning("Unerwartetes Response Format von trending pairs")
                         data['dex_screener'] = await self._get_solana_rpc_fallback()
-
-                elif response.status_code == 429:  # Rate limit
-                    logger.warning("DEX Screener Rate Limit erreicht, verwende Fallback")
-                    data['dex_screener'] = await self._get_solana_rpc_fallback()
                 else:
-                    logger.warning(f"DEX Screener API Fehler: {response.status_code}, Response: {response.text}")
+                    logger.warning(f"Beide DEX Screener Endpoints fehlgeschlagen")
                     data['dex_screener'] = await self._get_solana_rpc_fallback()
+
             except Exception as e:
                 logger.error(f"DEX Screener API Fehler: {e}")
                 data['dex_screener'] = await self._get_solana_rpc_fallback()
