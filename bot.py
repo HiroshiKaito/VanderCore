@@ -75,16 +75,30 @@ class SolanaWalletBot:
             "Wir informieren Sie, sobald die Wartung abgeschlossen ist."
         )
 
-        for user_id in self.active_users:
+        success_count = 0
+        failed_count = 0
+        for active_user_id in self.active_users:
             try:
                 context.bot.send_message(
-                    chat_id=user_id,
-                    text=maintenance_message
+                    chat_id=active_user_id,
+                    text=maintenance_message,
+                    parse_mode='Markdown'
                 )
+                success_count += 1
             except Exception as e:
-                logger.error(f"Fehler beim Senden der Wartungsnachricht an User {user_id}: {e}")
+                logger.error(f"Fehler beim Senden der Wartungsnachricht an User {active_user_id}: {e}")
+                failed_count += 1
 
-        update.message.reply_text("✅ Wartungsmodus aktiviert. Neue Anfragen werden pausiert.")
+        # Bestätige dem Admin die Aktivierung und sende Statistik
+        status_message = (
+            "✅ Wartungsmodus aktiviert\n\n"
+            f"📊 Benachrichtigungen gesendet an:\n"
+            f"- Erfolgreich: {success_count} Nutzer\n"
+            f"- Fehlgeschlagen: {failed_count} Nutzer\n\n"
+            "Neue Anfragen werden pausiert."
+        )
+
+        update.message.reply_text(status_message)
         logger.info("Wartungsmodus aktiviert")
 
     def exit_maintenance_mode(self, update: Update, context: CallbackContext):
@@ -102,16 +116,30 @@ class SolanaWalletBot:
             "Alle Ihre Trades und Signale sind weiterhin aktiv."
         )
 
-        for user_id in self.active_users:
+        success_count = 0
+        failed_count = 0
+        for active_user_id in self.active_users:
             try:
                 context.bot.send_message(
-                    chat_id=user_id,
-                    text=completion_message
+                    chat_id=active_user_id,
+                    text=completion_message,
+                    parse_mode='Markdown'
                 )
+                success_count += 1
             except Exception as e:
-                logger.error(f"Fehler beim Senden der Abschlussnachricht an User {user_id}: {e}")
+                logger.error(f"Fehler beim Senden der Abschlussnachricht an User {active_user_id}: {e}")
+                failed_count += 1
 
-        update.message.reply_text("✅ Wartungsmodus deaktiviert. Bot ist wieder voll verfügbar.")
+        # Bestätige dem Admin die Deaktivierung und sende Statistik
+        status_message = (
+            "✅ Wartungsmodus deaktiviert\n\n"
+            f"📊 Benachrichtigungen gesendet an:\n"
+            f"- Erfolgreich: {success_count} Nutzer\n"
+            f"- Fehlgeschlagen: {failed_count} Nutzer\n\n"
+            "Bot ist wieder voll verfügbar."
+        )
+
+        update.message.reply_text(status_message)
         logger.info("Wartungsmodus deaktiviert")
 
     def save_state(self):
@@ -391,8 +419,8 @@ class SolanaWalletBot:
             update.message.reply_photo(
                 photo=qr_bio,
                 caption=f"📱 Ihre Wallet-Adresse als QR-Code:\n\n"
-                f"`{address}`\n\n"
-                f"Scannen Sie den QR-Code, um SOL zu empfangen.",
+                        f"`{address}`\n\n"
+                        f"Scannen Sie den QR-Code, um SOL zu empfangen.",
                 parse_mode='Markdown'
             )
         except Exception as e:
@@ -406,12 +434,14 @@ class SolanaWalletBot:
     def handle_signal_command(self, update: Update, context: CallbackContext) -> None:
         """Handler für den /signal Befehl - zeigt aktuelle Trading Signale"""
         try:
+            logger.info(f"Signal-Abfrage von User {update.effective_user.id}")
             active_signals = self.signal_processor.get_active_signals()
 
             if not active_signals:
                 update.message.reply_text(
                     "🔍 Aktuell keine aktiven Trading-Signale verfügbar.\n"
-                    "Neue Signale werden automatisch analysiert und angezeigt."
+                    "Neue Signale werden automatisch analysiert und angezeigt.\n\n"
+                    "💡 Tipp: Aktiviere Benachrichtigungen für neue Signale mit /subscribe"
                 )
                 return
 
@@ -428,22 +458,29 @@ class SolanaWalletBot:
                     f"Möchten Sie dieses Signal handeln?"
                 )
 
-                # Erstelle Inline-Buttons für die Interaktion
                 keyboard = [
                     [
                         InlineKeyboardButton("✅ Handeln", callback_data=f"trade_signal_{idx}"),
-                        InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+                        InlineKeyboardButton("❌ Ignorieren", callback_data=f"ignore_signal_{idx}")
                     ]
                 ]
 
-                update.message.reply_text(
-                    signal_message,
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+                try:
+                    update.message.reply_text(
+                        signal_message,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                    logger.info(f"Signal #{idx + 1} erfolgreich an User {update.effective_user.id} gesendet")
+                except Exception as e:
+                    logger.error(f"Fehler beim Senden des Signals #{idx + 1}: {e}")
 
         except Exception as e:
             logger.error(f"Fehler beim Anzeigen der Signale: {e}")
-            update.message.reply_text("❌ Fehler beim Abrufen der Trading-Signale.")
+            update.message.reply_text(
+                "❌ Fehler beim Abrufen der Trading-Signale.\n"
+                "Bitte versuchen Sie es später erneut."
+            )
 
     def handle_trades_command(self, update: Update, context: CallbackContext) -> None:
         """Handler für den /trades Befehl - zeigt aktuelle Trades"""
@@ -510,7 +547,28 @@ class SolanaWalletBot:
         try:
             query.answer()
 
-            if query.data == "create_wallet":
+            if query.data.startswith("trade_signal_"):
+                signal_idx = int(query.data.split("_")[-1])
+                active_signals = self.signal_processor.get_active_signals()
+
+                if signal_idx < len(active_signals):
+                    signal = active_signals[signal_idx]
+                    # Hier können Sie die Trading-Logik implementieren
+                    confirmation_message = (
+                        f"✅ Signal wird ausgeführt:\n\n"
+                        f"Pair: {signal['pair']}\n"
+                        f"Richtung: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
+                        f"Einstieg: {signal['entry']:.2f} USDC"
+                    )
+                    query.message.reply_text(confirmation_message)
+                    logger.info(f"User {user_id} führt Signal #{signal_idx} aus")
+
+            elif query.data.startswith("ignore_signal_"):
+                signal_idx = int(query.data.split("_")[-1])
+                query.message.reply_text("Signal wurde ignoriert.")
+                logger.info(f"User {user_id} ignoriert Signal #{signal_idx}")
+
+            elif query.data == "create_wallet":
                 logger.info(f"Erstelle neue Solana-Wallet für User {user_id}")
                 public_key, private_key = self.wallet_manager.create_wallet()
                 if public_key and private_key:
@@ -580,23 +638,27 @@ class SolanaWalletBot:
             self.handle_text(update, context)
 
     def notify_admin(self, message: str, is_critical: bool = False):
-        """Sendet eine Benachrichtigung an den Admin"""
+        """Sendet eine Benachrichtigung an den Admin als private Nachricht"""
         try:
             if not self.config.ADMIN_USER_ID:
                 logger.error("Admin User ID nicht konfiguriert")
                 return
-
             prefix = "🚨 KRITISCH" if is_critical else "ℹ️ INFO"
             admin_message = f"{prefix}: {message}\n\nZeitstempel: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
             if self.updater and self.updater.bot:
+                # Sende die Nachricht direkt an den Admin-Chat
                 self.updater.bot.send_message(
                     chat_id=self.config.ADMIN_USER_ID,
-                    text=admin_message
+                    text=admin_message,
+                    parse_mode='Markdown'
                 )
                 logger.info(f"Admin-Benachrichtigung gesendet: {message}")
+            else:
+                logger.error("Bot-Updater nicht verfügbar für Admin-Benachrichtigung")
         except Exception as e:
             logger.error(f"Fehler beim Senden der Admin-Benachrichtigung: {e}")
+
 
     def test_admin_notification(self, update: Update, context: CallbackContext):
         """Sendet eine Test-Benachrichtigung an den Admin"""

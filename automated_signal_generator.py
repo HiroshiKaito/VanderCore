@@ -316,40 +316,40 @@ class AutomatedSignalGenerator:
             ]
 
             # Sende Nachricht mit Chart an alle aktiven Bot-Benutzer
-            if hasattr(self.bot, 'config') and hasattr(self.bot.config, 'ADMIN_USER_ID'):
+            for user_id in self.bot.active_users:
                 try:
                     # Sende zuerst das Chart-Bild
                     if chart_image:
-                        logger.info("Sende Prediction Chart...")
+                        logger.info(f"Sende Prediction Chart an User {user_id}...")
                         self.bot.updater.bot.send_photo(
-                            chat_id=self.bot.config.ADMIN_USER_ID,
+                            chat_id=user_id,
                             photo=chart_image,
                             caption="📊 Preisprognose für das Trading Signal"
                         )
-                        logger.info("Prediction Chart erfolgreich gesendet")
+                        logger.info(f"Prediction Chart erfolgreich an User {user_id} gesendet")
                     else:
                         logger.warning("Kein Chart-Bild verfügbar für das Signal")
 
                     # Dann sende die Signal-Details
-                    logger.info("Sende Signal-Details...")
+                    logger.info(f"Sende Signal-Details an User {user_id}...")
                     self.bot.updater.bot.send_message(
-                        chat_id=self.bot.config.ADMIN_USER_ID,
+                        chat_id=user_id,
                         text=signal_message,
                         reply_markup={"inline_keyboard": keyboard}
                     )
-                    logger.info("Trading Signal erfolgreich gesendet")
+                    logger.info(f"Trading Signal erfolgreich an User {user_id} gesendet")
 
                 except Exception as send_error:
-                    logger.error(f"Fehler beim Senden der Nachrichten: {send_error}")
+                    logger.error(f"Fehler beim Senden der Nachrichten an User {user_id}: {send_error}")
                     # Versuche es erneut nur mit der Text-Nachricht
                     try:
                         self.bot.updater.bot.send_message(
-                            chat_id=self.bot.config.ADMIN_USER_ID,
+                            chat_id=user_id,
                             text=signal_message + "\n\n⚠️ Chart konnte nicht generiert werden.",
                             reply_markup={"inline_keyboard": keyboard}
                         )
                     except Exception as fallback_error:
-                        logger.error(f"Auch Fallback-Nachricht fehlgeschlagen: {fallback_error}")
+                        logger.error(f"Auch Fallback-Nachricht an User {user_id} fehlgeschlagen: {fallback_error}")
 
         except Exception as e:
             logger.error(f"Fehler beim Senden der Signal-Benachrichtigung: {e}")
