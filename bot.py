@@ -26,11 +26,16 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # Flask App für Replit
 app = Flask(__name__)
 
+# Logging Setup mit detailliertem Format
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 @app.route('/')
 def home():
     return jsonify({"status": "Bot is running", "timestamp": datetime.now().isoformat()})
-
-# Rest des Codes bleibt unverändert bis zur run()-Methode
 
 def run_flask():
     """Startet den Flask-Server im Hintergrund"""
@@ -624,6 +629,7 @@ class SolanaWalletBot:
             self.handle_text(update, context)
 
     def test_signal(self, update: Update, context: CallbackContext):
+        """Generiert ein Test-Signal"""
         logger.info("Test-Signal wird generiert...")
         try:
             # Erstelle ein Test-Signal
@@ -660,8 +666,8 @@ class SolanaWalletBot:
                 self.active_users.add(update.effective_user.id)
                 logger.info(f"User {update.effective_user.id} zu aktiven Nutzern hinzugefügt")
 
+                # Sende das Signal direkt ohne zusätzliche Bestätigungsnachricht
                 self.signal_generator._notify_users_about_signal(processed_signal)
-                update.message.reply_text("✅ Test-Signal erfolgreich generiert und versendet!")
             else:
                 update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
         except Exception as e:
