@@ -1,3 +1,4 @@
+"""AI Trading Engine mit ML-basierter Signalgenerierung und Marktanalyse"""
 import logging
 import numpy as np
 from typing import Dict, List, Tuple, Any
@@ -8,6 +9,7 @@ import ta
 import requests
 from datetime import datetime, timedelta
 import asyncio
+from sentiment_analyzer import SentimentAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +21,15 @@ class AITradingEngine:
         self.cached_data = {}
         self.last_prediction = None
         self.confidence_threshold = 0.75
+        self.sentiment_analyzer = SentimentAnalyzer()
 
         # API Endpoints
         self.coingecko_api = "https://api.coingecko.com/api/v3"
-        self.dex_screener_api = "https://api.dexscreener.com/latest"  # Korrigierter Base-URL
-        self.nitter_api = "https://nitter.cz/search"  # Alternative Nitter Instance mit SSL
+        self.dex_screener_api = "https://api.dexscreener.com/latest"
         self.solana_rpc = "https://api.mainnet-beta.solana.com"
 
         # Token Addresses
-        self.sol_token_address = "So11111111111111111111111111111111111111112"  # Wrapped SOL token address
+        self.sol_token_address = "So11111111111111111111111111111111111111112"
 
         logger.info("KI-Trading-Engine initialisiert mit scikit-learn")
 
@@ -59,9 +61,18 @@ class AITradingEngine:
             df['volume_change'] = df['volume'].pct_change()
             df['trend_strength'] = abs(df['price_change'].rolling(window=10).mean())
 
+            # Sentiment Features
+            if 'sentiment_score' in df.columns:
+                df['sentiment_ma'] = df['sentiment_score'].rolling(window=5).mean()
+                df['sentiment_std'] = df['sentiment_score'].rolling(window=5).std()
+            else:
+                df['sentiment_ma'] = 0.5
+                df['sentiment_std'] = 0.1
+
             feature_columns = [
                 'close', 'volume', 'rsi', 'macd', 'bb_upper', 'bb_lower',
-                'price_change', 'volatility', 'volume_change', 'trend_strength'
+                'price_change', 'volatility', 'volume_change', 'trend_strength',
+                'sentiment_ma', 'sentiment_std'
             ]
 
             # Entferne NaN-Werte
@@ -73,22 +84,15 @@ class AITradingEngine:
             logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")
             return np.array([])
 
-    def _build_model(self):
-        """Erstellt das Random Forest Modell"""
-        try:
-            self._init_model()
-            logger.info("Random Forest Modell erfolgreich erstellt")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Erstellen des Models: {e}")
-            self.model = None
-
-    def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
+    async def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
         """Sagt die nächste Kursbewegung vorher"""
         try:
             if self.model is None:
                 self._build_model()
-                return self._predict_with_technical_analysis(current_data)
+
+            # Hole Sentiment-Daten
+            sentiment_data = await self.sentiment_analyzer.analyze_market_sentiment()
+            current_data['sentiment_score'] = sentiment_data['overall_score']
 
             X = self.prepare_features(current_data)
             if len(X) == 0:
@@ -103,26 +107,62 @@ class AITradingEngine:
             volatility = current_data['close'].rolling(window=20).std().iloc[-1]
             volume_trend = current_data['volume'].pct_change().rolling(window=5).mean().iloc[-1]
 
+            # Berücksichtige Sentiment in der Konfidenzberechnung
             confidence = self._calculate_confidence(
                 price_change=price_change,
                 volatility=volatility,
                 volume_trend=volume_trend,
-                current_price=current_price
+                current_price=current_price,
+                sentiment_score=sentiment_data['overall_score']
             )
 
-            return {
+            prediction_data = {
                 'prediction': predicted_price,
                 'confidence': confidence,
                 'price_change': price_change,
                 'signal': 'long' if price_change > 0 else 'short',
                 'volatility': volatility,
                 'volume_trend': volume_trend,
+                'sentiment': sentiment_data,
                 'timestamp': pd.Timestamp.now().timestamp()
             }
+
+            logger.info(f"Prediction generated: Price {predicted_price:.2f}, "
+                    f"Change {price_change:.2f}%, Confidence {confidence:.2f}")
+
+            return prediction_data
 
         except Exception as e:
             logger.error(f"Fehler bei der Vorhersage: {e}")
             return self._predict_with_technical_analysis(current_data)
+
+    def _calculate_confidence(self, price_change: float, volatility: float,
+                          volume_trend: float, current_price: float,
+                          sentiment_score: float) -> float:
+        """Berechnet die Konfidenz der Vorhersage mit Sentiment"""
+        try:
+            # Basis-Konfidenzberechnung
+            price_confidence = min(abs(price_change) / 2, 1.0)
+            volume_confidence = min(abs(volume_trend) * 5, 1.0)
+            volatility_confidence = max(1 - (volatility / current_price) * 100, 0.0)
+
+            # Sentiment-Einfluss (0.2 Gewichtung)
+            sentiment_impact = (sentiment_score - 0.5) * 2  # Konvertiere zu [-1, 1]
+
+            # Gewichtete Summe aller Faktoren
+            confidence = (
+                price_confidence * 0.4 +
+                volume_confidence * 0.2 +
+                volatility_confidence * 0.2 +
+                sentiment_impact * 0.2
+            )
+
+            # Normalisiere auf [0, 1]
+            return max(0.0, min(1.0, confidence))
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Konfidenzberechnung: {e}")
+            return 0.0
 
     def _predict_with_technical_analysis(self, data: pd.DataFrame) -> Dict[str, Any]:
         """Fallback-Vorhersage basierend auf technischer Analyse"""
@@ -163,44 +203,6 @@ class AITradingEngine:
             logger.error(f"Fehler bei der technischen Analyse: {e}")
             return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
 
-    def _calculate_confidence(self, price_change: float, volatility: float, 
-                          volume_trend: float, current_price: float) -> float:
-        """Berechnet die Konfidenz der Vorhersage"""
-        try:
-            price_confidence = min(abs(price_change) / 2, 1.0)
-            volume_confidence = min(abs(volume_trend) * 5, 1.0)
-            volatility_confidence = max(1 - (volatility / current_price) * 100, 0.0)
-
-            confidence = (
-                price_confidence * 0.5 +
-                volume_confidence * 0.3 +
-                volatility_confidence * 0.2
-            )
-
-            return min(confidence, 1.0)
-
-        except Exception as e:
-            logger.error(f"Fehler bei der Konfidenzberechnung: {e}")
-            return 0.0
-
-    def train_model(self, training_data: pd.DataFrame):
-        """Trainiert das Random Forest Modell"""
-        if self.model is None:
-            self._build_model()
-
-        try:
-            X = self.prepare_features(training_data[:-1])  # Alle außer dem letzten Datenpunkt
-            y = training_data['close'].iloc[1:].values  # Verschiebe um einen Zeitschritt
-
-            if len(X) == 0 or len(y) == 0:
-                logger.error("Keine Trainingsdaten verfügbar")
-                return
-
-            self.model.fit(X, y)
-            logger.info("Modell erfolgreich trainiert")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Training: {e}")
 
     async def fetch_market_data(self) -> Dict[str, Any]:
         """Holt erweiterte Marktdaten von verschiedenen Quellen"""
@@ -443,3 +445,22 @@ class AITradingEngine:
         except Exception as e:
             logger.error(f"Fehler beim Backtesting: {e}")
             return {}
+
+    def train_model(self, training_data: pd.DataFrame):
+        """Trainiert das Random Forest Modell"""
+        if self.model is None:
+            self._build_model()
+
+        try:
+            X = self.prepare_features(training_data[:-1])  # Alle außer dem letzten Datenpunkt
+            y = training_data['close'].iloc[1:].values  # Verschiebe um einen Zeitschritt
+
+            if len(X) == 0 or len(y) == 0:
+                logger.error("Keine Trainingsdaten verfügbar")
+                return
+
+            self.model.fit(X, y)
+            logger.info("Modell erfolgreich trainiert")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Training: {e}")

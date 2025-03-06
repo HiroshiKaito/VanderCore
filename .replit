@@ -1,4 +1,4 @@
-modules = ["python3", "python-3.11"]
+modules = ["python3", "python-3.11", "nodejs-20"]
 
 [nix]
 channel = "stable-24_05"
@@ -50,7 +50,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python test_market_data.py"
+args = "python test_ai_trading.py"
 
 [[workflows.workflow]]
 name = "API Test"
