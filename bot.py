@@ -1,5 +1,6 @@
+"""Main bot file for the Solana Trading Bot"""
 import logging
-import pytz # Added for timezone awareness
+import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater,
@@ -25,6 +26,9 @@ from automated_signal_generator import AutomatedSignalGenerator
 from apscheduler.schedulers.background import BackgroundScheduler
 import pandas as pd
 
+# Setze Werkzeug Logger auf WARNING
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
 # Flask App für Replit
 app = Flask(__name__)
 
@@ -41,7 +45,11 @@ def home():
 
 def run_flask():
     """Startet den Flask-Server im Hintergrund"""
-    app.run(host='0.0.0.0', port=5000)
+    try:
+        app.run(host='0.0.0.0', port=5000)
+    except Exception as e:
+        logger.error(f"Fehler beim Starten des Flask-Servers: {e}")
+        raise
 
 class SolanaWalletBot:
     def __init__(self):
@@ -49,10 +57,8 @@ class SolanaWalletBot:
         logger.info("Initialisiere Bot...")
         self.config = Config()
 
-        # Überprüfe Token-Format
-        if not self.config.TELEGRAM_TOKEN:
-            logger.error("TELEGRAM_TOKEN nicht gefunden!")
-            raise ValueError("TELEGRAM_TOKEN muss gesetzt sein!")
+        # Setze Timezone für APScheduler
+        self.timezone = pytz.timezone('UTC')
 
         # Bot-Status
         self.maintenance_mode = False
@@ -66,10 +72,6 @@ class SolanaWalletBot:
         self.dex_connector = DexConnector()
         self.signal_processor = SignalProcessor()
         self.signal_generator = None
-
-        # Status Tracking
-        self.waiting_for_address = {}
-        self.waiting_for_trade_amount = False
 
         logger.info("Bot erfolgreich initialisiert")
 
@@ -632,8 +634,13 @@ class SolanaWalletBot:
 
     def test_signal(self, update: Update, context: CallbackContext):
         """Generiert ein Test-Signal"""
-        logger.info("Test-Signal wird generiert...")
         try:
+            user_id = update.effective_user.id
+            logger.info(f"Test-Signal-Befehl empfangen von User {user_id}")
+
+            # Bestätige den Empfang des Befehls an den Benutzer
+            update.message.reply_text("🔄 Generiere Test-Signal...")
+
             current_time = datetime.now(pytz.UTC)
             # Erstelle ein Test-Signal
             test_signal = {
@@ -697,6 +704,8 @@ class SolanaWalletBot:
                     logger.info("Chart erfolgreich generiert")
                 else:
                     logger.error("Chart konnte nicht generiert werden")
+                    update.message.reply_text("❌ Fehler bei der Chart-Generierung")
+                    return
 
                 # Füge den aktuellen Benutzer zu aktiven Nutzern hinzu
                 self.active_users.add(update.effective_user.id)
@@ -767,82 +776,71 @@ class SolanaWalletBot:
             update.message.reply_text("❌ Fehler beim Senden der Test-Benachrichtigung")
 
     def run(self):
-        """Startet den Bot mit verbesserter Fehlertoleranz"""
-        logger.info("Starte Bot...")
-        try:
+        """Startet den Bot"""        try:
+            logger.info("Starte Bot...")
+
             # Lade gespeicherten Zustand
             self.load_state()
 
-            # Initialisiere Updater
-            self.updater= Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
-            dp = self.updater.dispatcher
-
-            # Registriere Handler
-            dp.add_error_handler(self.error_handler)
-
-            # Basis-Kommandos
-            dp.add_handler(CommandHandler("start", self.start))
-            dp.add_handler(CommandHandler("hilfe", self.help_command))
-            dp.add_handler(CommandHandler("wallet", self.wallet_command))
-            dp.add_handler(CommandHandler("senden", self.send_command))
-            dp.add_handler(CommandHandler("empfangen", self.receive_command))
-            dp.add_handler(CommandHandler("trades", self.handle_trades_command))
-
-            # Admin-Kommandos
-            dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
-            dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
-            dp.add_handler(CommandHandler("test_admin", self.test_admin_notification))
-            dp.add_handler(CommandHandler("test_signal", self.test_signal))
-
-            # Callback und Message Handler
-            dp.add_handler(CallbackQueryHandler(self.button_handler))
-            dp.add_handler(MessageHandler(Filters.all, self.handle_update))
-
-            # Starte Komponenten
-            self.dex_connector.initialize()
-            self.signal_generator = AutomatedSignalGenerator(
-                self.dex_connector,
-                self.signal_processor,
-                self
-            )
-            self.signal_generator.start()
-
-            # Konfiguriere Heartbeat
-            scheduler = BackgroundScheduler(timezone='UTC')
-            scheduler.add_job(self._send_heartbeat, 'interval', minutes=5)
-            scheduler.start()
-
-            # Starte Flask-Server im Hintergrund
-            flask_thread = threading.Thread(target=run_flask)
-            flask_thread.daemon = True
-            flask_thread.start()
-            logger.info("Flask-Server gestartet auf Port 5000")
-
-            # Starte Polling mit Retry-Mechanismus
+            # Initialisiere Updater mit Retry-Mechanismus
             retry_count = 0
             max_retries = 3
+
             while retry_count < max_retries:
                 try:
-                    self.updater.start_polling(timeout=30, drop_pending_updates=True)
-                    logger.info("Bot ist bereit für Nachrichten")
-                    self.updater.idle()
+                    self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
+                    dp = self.updater.dispatcher
+
+                    # Registriere Handler
+                    dp.add_handler(CommandHandler("start", self.start))
+                    dp.add_handler(CommandHandler("hilfe", self.help_command))
+                    dp.add_handler(CommandHandler("wallet", self.wallet_command))
+                    dp.add_handler(CommandHandler("senden", self.send_command))
+                    dp.add_handler(CommandHandler("empfangen", self.receive_command))
+                    dp.add_handler(CommandHandler("trades", self.handle_trades_command))
+                    dp.add_handler(CommandHandler("test_signal", self.test_signal))
+                    dp.add_handler(CommandHandler("wartung_start", self.enter_maintenance_mode))
+                    dp.add_handler(CommandHandler("wartung_ende", self.exit_maintenance_mode))
+
+                    # Füge Callback Query Handler hinzu
+                    dp.add_handler(CallbackQueryHandler(self.button_handler))
+
+                    # Füge Error Handler hinzu
+                    dp.add_error_handler(self.error_handler)
+
+                    # Starte Polling
+                    logger.info("Starte Polling...")
+                    self.updater.start_polling(drop_pending_updates=True)
                     break
+
                 except Exception as e:
                     retry_count += 1
-                    logger.error(f"Fehler beim Starten des Bots (Versuch {retry_count}): {e}")
+                    logger.error(f"Fehler beim Initialisieren des Updaters (Versuch {retry_count}): {e}")
                     if retry_count == max_retries:
                         raise
                     time.sleep(5 * retry_count)
 
+            # Starte Flask im Hintergrund
+            threading.Thread(target=run_flask, daemon=True).start()
+            logger.info("Flask-Server gestartet")
+
+            # Starte Heartbeat mit korrekter Timezone
+            scheduler = BackgroundScheduler(timezone=self.timezone)
+            scheduler.add_job(self._send_heartbeat, 'interval', minutes=5)
+            scheduler.start()
+            logger.info("Heartbeat-Überwachung gestartet")
+
+            logger.info("Bot erfolgreich gestartet!")
+            self.updater.idle()
+
         except Exception as e:
-            logger.error(f"Kritischer Fehler beim Bot-Start: {e}")
+            logger.error(f"Fehler beim Starten des Bots: {e}")
             raise
 
 if __name__ == "__main__":
-    while True:
-        try:
-            bot = SolanaWalletBot()
-            bot.run()
-        except Exception as e:
-            logger.critical(f"Bot-Ausführung fehlgeschlagen: {e}")
-            time.sleep(60)  # Warte eine Minute vor Neustart
+    try:
+        bot = SolanaWalletBot()
+        bot.run()
+    except Exception as e:
+        logger.critical(f"Bot-Ausführung fehlgeschlagen: {e}")
+        raise
