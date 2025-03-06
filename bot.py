@@ -63,8 +63,18 @@ class SolanaWalletBot:
         # Bot-Status
         self.maintenance_mode = False
         self.update_in_progress = False
-        self.active_users = set()
+        self.active_users = set()  # Verwende ein Set für eindeutige User IDs
         self.pending_operations = {}
+
+        # Versuche gespeicherte User-IDs zu laden
+        try:
+            if os.path.exists('active_users.json'):
+                with open('active_users.json', 'r') as f:
+                    saved_users = json.load(f)
+                    self.active_users = set(map(str, saved_users))  # Konvertiere zu Strings
+                    logger.info(f"Aktive Nutzer geladen: {self.active_users}")
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der aktiven Nutzer: {e}")
 
         # Komponenten
         self.wallet_manager = WalletManager(self.config.SOLANA_RPC_URL)
@@ -231,7 +241,7 @@ class SolanaWalletBot:
         logger.info(f"Update von User {user_id} empfangen")
 
         # Füge Nutzer zu aktiven Nutzern hinzu
-        self.active_users.add(user_id)
+        self.add_active_user(user_id)
         logger.debug(f"Aktive Nutzer aktualisiert: {len(self.active_users)} Nutzer")
 
         # Prüfe Wartungsmodus
@@ -336,7 +346,7 @@ class SolanaWalletBot:
 
         try:
             # Füge Benutzer zu aktiven Nutzern hinzu
-            self.active_users.add(user_id)
+            self.add_active_user(user_id)
             logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt. Aktive Nutzer: {self.active_users}")
 
             # Sende Willkommensnachricht
@@ -362,11 +372,20 @@ class SolanaWalletBot:
             logger.debug("Start-Nachricht erfolgreich gesendet")
 
             # Aktiviere automatische Signal-Generierung
-            if self.signal_generator:
-                logger.info(f"Aktiviere Signal-Generierung für User {user_id}")
-                self.signal_generator.start()
-            else:
-                logger.warning("Signal Generator nicht initialisiert!")
+            if not self.signal_generator:
+                logger.info("Initialisiere Signal Generator...")
+                self.signal_generator = AutomatedSignalGenerator(
+                    self.dex_connector,
+                    self.signal_processor,
+                    self
+                )
+
+            logger.info(f"Starte Signal Generator für User {user_id}")
+            self.signal_generator.start()
+
+            # Sende Test-Signal um zu verifizieren
+            logger.info("Sende Test-Signal zur Verifizierung...")
+            self.test_signal(update, context)
 
             logger.info(f"Start-Befehl für User {user_id} erfolgreich verarbeitet")
 
@@ -753,6 +772,23 @@ class SolanaWalletBot:
         except Exception as e:
             logger.error(f"Fehler beim Senden der Test-Benachrichtigung: {e}")
             update.message.reply_text("❌ Fehler beim Senden der Test-Benachrichtigung")
+
+    def save_active_users(self):
+        """Speichert aktive Nutzer in einer Datei"""
+        try:
+            with open('active_users.json', 'w') as f:
+                json.dump(list(self.active_users), f)
+            logger.info(f"Aktive Nutzer gespeichert: {self.active_users}")
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern der aktiven Nutzer: {e}")
+
+    def add_active_user(self, user_id: int):
+        """Fügt einen neuen aktiven Nutzer hinzu"""
+        user_id_str = str(user_id)
+        self.active_users.add(user_id_str)
+        logger.info(f"Neuer aktiver Nutzer hinzugefügt: {user_id_str}")
+        logger.info(f"Aktuelle aktive Nutzer: {self.active_users}")
+        self.save_active_users()
 
     def run(self):
         """Startet den Bot"""
