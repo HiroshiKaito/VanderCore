@@ -394,28 +394,48 @@ class SolanaWalletBot:
 
     def wallet_command(self, update: Update, context: CallbackContext) -> None:
         """Wallet-Befehl Handler"""
-        user_id = update.effective_user.id
-        logger.info(f"Wallet-Befehl von User {user_id}")
-        address = self.wallet_manager.get_address()
-        if not address:
-            logger.info(f"Keine Wallet für User {user_id}")
-            update.message.reply_text(
-                "❌ Keine Wallet verbunden. Bitte zuerst eine Wallet erstellen.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")
-                ]])
-            )
-            return
+        try:
+            user_id = update.effective_user.id
+            logger.info(f"Wallet-Befehl von User {user_id}")
 
-        balance = self.wallet_manager.get_balance()
-        logger.info(f"Wallet-Info abgerufen für User {user_id}, Balance: {balance}")
-        update.message.reply_text(
-            format_wallet_info(balance, address),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💸 Senden", callback_data="send_sol")],
-                [InlineKeyboardButton("📱 QR-Code anzeigen", callback_data="show_qr")]
-            ])
-        )
+            # Überprüfe ob eine Wallet existiert
+            address = self.wallet_manager.get_address()
+            if not address:
+                logger.info(f"Keine Wallet für User {user_id} gefunden")
+                update.message.reply_text(
+                    "❌ Keine Wallet verbunden. Bitte zuerst eine Wallet erstellen.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔗 Wallet erstellen", callback_data="create_wallet")
+                    ]])
+                )
+                return
+
+            # Hole Wallet-Balance
+            try:
+                balance = self.wallet_manager.get_balance()
+                logger.info(f"Wallet-Info abgerufen für User {user_id}, Balance: {balance}")
+
+                update.message.reply_text(
+                    format_wallet_info(balance, address),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💸 Senden", callback_data="send_sol")],
+                        [InlineKeyboardButton("📱 QR-Code anzeigen", callback_data="show_qr")]
+                    ])
+                )
+            except Exception as balance_error:
+                logger.error(f"Fehler beim Abrufen der Wallet-Balance: {balance_error}")
+                update.message.reply_text(
+                    "❌ Fehler beim Abrufen der Wallet-Informationen. Bitte versuchen Sie es später erneut."
+                )
+
+        except Exception as e:
+            logger.error(f"Fehler im wallet_command: {e}")
+            try:
+                update.message.reply_text(
+                    "❌ Ein Fehler ist aufgetreten. Bitte versuchen Sie es später erneut."
+                )
+            except Exception as reply_error:
+                logger.error(f"Fehler beim Senden der Fehlermeldung: {reply_error}")
 
     def send_command(self, update: Update, context: CallbackContext) -> None:
         """Senden-Befehl Handler"""
@@ -532,31 +552,10 @@ class SolanaWalletBot:
         try:
             query.answer()
 
-            if query.data.startswith("trade_signal_"):
-                signal_idx = int(query.data.split("_")[-1])
-                active_signals = self.signal_processor.get_active_signals()
-
-                if signal_idx < len(active_signals):
-                    signal = active_signals[signal_idx]
-                    # Hier können Sie die Trading-Logik implementieren
-                    confirmation_message = (
-                        f"✅ Signal wird ausgeführt:\n\n"
-                        f"Pair: {signal['pair']}\n"
-                        f"Richtung: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
-                        f"Einstieg: {signal['entry']:.2f} USDC"
-                    )
-                    query.message.reply_text(confirmation_message)
-                    logger.info(f"User {user_id} führt Signal #{signal_idx} aus")
-
-            elif query.data.startswith("ignore_signal_"):
-                signal_idx = int(query.data.split("_")[-1])
-                query.message.delete()
-                logger.info(f"Signal-Nachricht wurde auf Benutzeranfrage gelöscht")
-                return
-
-            elif query.data == "create_wallet":
+            if query.data == "create_wallet":
                 logger.info(f"Erstelle neue Solana-Wallet für User {user_id}")
-                public_key, private_key = self.wallet_manager.create_wallet()
+                public_key, private_key = self.wallet_manager.create_wallet(str(user_id))
+
                 if public_key and private_key:
                     logger.info(f"Solana-Wallet erfolgreich erstellt für User {user_id}")
                     query.message.reply_text(
@@ -584,6 +583,28 @@ class SolanaWalletBot:
                 else:
                     logger.error(f"Fehler bei Wallet-Erstellung für User {user_id}")
                     query.message.reply_text("❌ Fehler beim Erstellen der Wallet!")
+
+            elif query.data.startswith("trade_signal_"):
+                signal_idx = int(query.data.split("_")[-1])
+                active_signals = self.signal_processor.get_active_signals()
+
+                if signal_idx < len(active_signals):
+                    signal = active_signals[signal_idx]
+                    # Hier können Sie die Trading-Logik implementieren
+                    confirmation_message = (
+                        f"✅ Signal wird ausgeführt:\n\n"
+                        f"Pair: {signal['pair']}\n"
+                        f"Richtung: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
+                        f"Einstieg: {signal['entry']:.2f} USDC"
+                    )
+                    query.message.reply_text(confirmation_message)
+                    logger.info(f"User {user_id} führt Signal #{signal_idx} aus")
+
+            elif query.data.startswith("ignore_signal_"):
+                signal_idx = int(query.data.split("_")[-1])
+                query.message.delete()
+                logger.info(f"Signal-Nachricht wurde auf Benutzeranfrage gelöscht")
+                return
 
             elif query.data == "start_signal_search":
                 # Initialisiere und starte den Signal Generator
@@ -760,7 +781,7 @@ class SolanaWalletBot:
 
         except Exception as e:
             logger.error(f"Fehler beim Senden der Test-Benachrichtigung: {e}")
-            update.message.reply_text("❌ Fehler beim Senden der Test-Benachrichtigung")
+            update.message.reply_text("❌Fehler beim Senden der Test-Benachrichtigung")
 
     def run(self):
         """Startet den Bot"""
@@ -821,5 +842,4 @@ if __name__ == "__main__":
         bot = SolanaWalletBot()
         bot.run()
     except Exception as e:
-        logger.critical(f"Bot-Ausführung fehlgeschlagen: {e}")
-        raise
+        logger.error(f"Kritischer Fehler beim Ausführen des Bots: {e}")
