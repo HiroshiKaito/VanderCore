@@ -650,8 +650,9 @@ class SolanaWalletBot:
             # Verarbeite das Signal
             processed_signal = self.signal_processor.process_signal(test_signal)
             if processed_signal:
-                # Signal wurde erfolgreich verarbeitet, jetzt die Benachrichtigung senden
                 logger.info("Test-Signal erfolgreich verarbeitet, sende Benachrichtigung...")
+
+                # Initialisiere Signal Generator wenn nötig
                 if not self.signal_generator:
                     logger.info("Initialisiere Signal Generator...")
                     self.signal_generator = AutomatedSignalGenerator(
@@ -661,6 +662,39 @@ class SolanaWalletBot:
                     )
                     self.signal_generator.start()
                     logger.info("Signal Generator erfolgreich gestartet")
+
+                # Aktualisiere Chart-Daten vor der Chart-Generierung
+                self.signal_generator.chart_analyzer.update_price_data(self.dex_connector, "SOL")
+                logger.info("Chart-Daten aktualisiert")
+
+                # Falls keine Chart-Daten vorhanden sind, simuliere Dummy-Daten für den Test
+                if self.signal_generator.chart_analyzer.data.empty:
+                    logger.info("Keine echten Marktdaten verfügbar, erstelle Dummy-Daten für Test")
+                    import pandas as pd
+                    from datetime import datetime, timedelta
+                    now = datetime.now()
+                    # Erstelle Dummy OHLC-Daten (10 Datenpunkte über die letzten 30 Minuten)
+                    dummy_data = pd.DataFrame({
+                        'Open': [test_signal['entry']]*10,
+                        'High': [test_signal['entry']*1.01]*10,
+                        'Low': [test_signal['entry']*0.99]*10,
+                        'Close': [test_signal['entry']]*10,
+                        'Volume': [1000000]*10
+                    }, index=[now - timedelta(minutes=30-3*i) for i in range(10)])
+                    self.signal_generator.chart_analyzer.data = dummy_data
+                    logger.info("Dummy-Chart-Daten generiert")
+
+                # Generiere Chart direkt hier für bessere Kontrolle
+                chart_image = self.signal_generator.chart_analyzer.create_prediction_chart(
+                    entry_price=processed_signal['entry'],
+                    target_price=processed_signal['take_profit'],
+                    stop_loss=processed_signal['stop_loss']
+                )
+
+                if chart_image:
+                    logger.info("Chart erfolgreich generiert")
+                else:
+                    logger.error("Chart konnte nicht generiert werden")
 
                 # Füge den aktuellen Benutzer zu aktiven Nutzern hinzu
                 self.active_users.add(update.effective_user.id)

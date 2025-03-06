@@ -21,33 +21,53 @@ class ChartAnalyzer:
         """Aktualisiert die Preisdaten"""
         try:
             current_time = datetime.now()
+            logger.info(f"Starte Preisdaten-Update für {token_address}")
 
             # Überprüfe ob das letzte Update weniger als 3 Sekunden her ist
             if self.last_update and (current_time - self.last_update).total_seconds() < 3:
+                logger.debug("Zu früh für neues Update, überspringe")
                 return
 
             market_info = dex_connector.get_market_info(token_address)
-            if market_info and market_info.get('price', 0) > 0:
-                price = float(market_info['price'])
-                new_data = pd.DataFrame([{
-                    'timestamp': current_time,
-                    'Open': price,
-                    'High': price * 1.001,  # Simuliere leichte Preisschwankungen
-                    'Low': price * 0.999,
-                    'Close': price,
-                    'Volume': float(market_info.get('volume', 0))
-                }])
+            if not market_info or market_info.get('price', 0) <= 0:
+                logger.error("Ungültige Marktdaten erhalten")
+                return
 
-                self.data = pd.concat([self.data, new_data], ignore_index=True)
-                self.data = self.data.drop_duplicates(subset=['timestamp'])
-                self.data = self.data.sort_values('timestamp')
+            price = float(market_info['price'])
+            volume = float(market_info.get('volume', 0))
+            logger.info(f"Neue Marktdaten empfangen - Preis: {price:.2f} USDC, Volumen: {volume:.2f}")
 
-                # Behalte nur die letzten 30 Minuten für sehr schnelle Analyse
-                cutoff_time = current_time - timedelta(minutes=30)
-                self.data = self.data[self.data['timestamp'] > cutoff_time]
+            # Erstelle OHLC Daten für Candlestick Chart
+            new_data = pd.DataFrame([{
+                'timestamp': current_time,
+                'Open': price,
+                'High': price * 1.002,  # Erhöhte Schwankung für bessere Visualisierung
+                'Low': price * 0.998,
+                'Close': price,
+                'Volume': volume
+            }])
 
-                self.last_update = current_time
-                logger.info(f"Neue Preisdaten hinzugefügt - Aktueller Preis: {price:.2f} USDC")
+            # Setze den Index für mplfinance
+            new_data.set_index('timestamp', inplace=True)
+            logger.debug("Neue Daten vorbereitet")
+
+            if self.data.empty:
+                self.data = new_data
+                logger.debug("Erste Daten gesetzt")
+            else:
+                self.data = pd.concat([self.data, new_data])
+                logger.debug("Daten hinzugefügt")
+
+            # Entferne Duplikate und sortiere
+            self.data = self.data[~self.data.index.duplicated(keep='last')]
+            self.data.sort_index(inplace=True)
+
+            # Behalte nur die letzten 30 Minuten für sehr schnelle Analyse
+            cutoff_time = current_time - timedelta(minutes=30)
+            self.data = self.data[self.data.index > cutoff_time]
+
+            self.last_update = current_time
+            logger.info(f"Preisdaten erfolgreich aktualisiert - {len(self.data)} Datenpunkte")
 
         except Exception as e:
             logger.error(f"Fehler beim Aktualisieren der Preisdaten: {e}")
@@ -55,19 +75,23 @@ class ChartAnalyzer:
     def create_prediction_chart(self, entry_price: float, target_price: float, stop_loss: float) -> BytesIO:
         """Erstellt einen Candlestick-Chart mit Vorhersage und Ein-/Ausstiegspunkten"""
         try:
-            logger.info(f"Erstelle Prediction Chart - Entry: {entry_price:.2f}, Target: {target_price:.2f}, Stop: {stop_loss:.2f}")
+            logger.info(f"Starte Chart-Erstellung - Entry: {entry_price:.2f}, Target: {target_price:.2f}, Stop: {stop_loss:.2f}")
+
+            if self.data.empty:
+                logger.error("Keine Daten für Chart-Erstellung verfügbar")
+                return None
 
             # Bereite Daten für mplfinance vor
             df = self.data.copy()
-            df.set_index('timestamp', inplace=True)
+            logger.info(f"Daten für Chart vorbereitet, Zeilen: {len(df)}")
 
             # Definiere Plot-Style
             mc = mpf.make_marketcolors(
-                up='#4CAF50',
-                down='#FF5252',
+                up='#00ff00',      # Hellgrün für steigende Kerzen
+                down='#ff0000',    # Hellrot für fallende Kerzen
                 edge='inherit',
                 wick='inherit',
-                volume='#7B1FA2'
+                volume='#7B1FA2'   # Lila für Volumen
             )
             s = mpf.make_mpf_style(
                 marketcolors=mc,
@@ -75,80 +99,47 @@ class ChartAnalyzer:
                 gridcolor='#444444',
                 figcolor='#1a1a1a',
                 facecolor='#2d2d2d',
-                edgecolor='#444444',
-                volume_linewidth=2
+                edgecolor='#444444'
             )
+            logger.info("Plot-Style definiert")
 
-            # Erstelle Annotations für Entry, Target und Stop Loss
-            current_time = df.index[-1]
-            future_time = current_time + timedelta(minutes=5)
+            try:
+                # Plot erstellen
+                fig, axlist = mpf.plot(
+                    df,
+                    type='candle',
+                    volume=True,
+                    style=s,
+                    figsize=(12, 8),  # Größerer Chart
+                    title='\nSOL/USDC Preisprognose',
+                    returnfig=True
+                )
+                logger.info("Grundlegender Chart erstellt")
 
-            entry_scatter = dict(
-                y=[entry_price],
-                x=[current_time],
-                marker='^',
-                color='lime',
-                markersize=100,
-                label='Entry'
-            )
+                # Füge Entry, Target und Stop Loss Marker hinzu
+                ax = axlist[0]
+                ax.axhline(y=entry_price, color='lime', linestyle='--', label='Entry')
+                ax.axhline(y=target_price, color='cyan', linestyle='--', label='Target')
+                ax.axhline(y=stop_loss, color='red', linestyle='--', label='Stop')
+                ax.legend()
+                logger.info("Preislinien hinzugefügt")
 
-            target_scatter = dict(
-                y=[target_price],
-                x=[future_time],
-                marker='*',
-                color='cyan',
-                markersize=100,
-                label='Target'
-            )
+                # Speichere Chart in BytesIO
+                img_bio = BytesIO()
+                fig.savefig(img_bio, format='png', dpi=100, bbox_inches='tight', 
+                           facecolor='#1a1a1a', edgecolor='none')
+                img_bio.seek(0)
+                plt.close(fig)
 
-            stop_scatter = dict(
-                y=[stop_loss],
-                x=[future_time],
-                marker='v',
-                color='red',
-                markersize=100,
-                label='Stop'
-            )
+                logger.info("Chart erfolgreich als Bild gespeichert")
+                return img_bio
 
-            # Plot erstellen
-            fig, axlist = mpf.plot(
-                df,
-                type='candle',
-                volume=True,
-                style=s,
-                figsize=(10, 6),
-                addplot=[
-                    mpf.make_addplot([entry_price] * len(df), color='lime', linestyle='--', width=1),
-                    mpf.make_addplot([target_price] * len(df), color='cyan', linestyle='--', width=1),
-                    mpf.make_addplot([stop_loss] * len(df), color='red', linestyle='--', width=1)
-                ],
-                alines=dict(
-                    alines=[[current_time, future_time, entry_price, target_price]],
-                    colors=['g--'], 
-                    linewidths=[0.5],
-                    alpha=0.5
-                ),
-                returnfig=True
-            )
-
-            # Füge Scatter-Plots hinzu
-            ax = axlist[0]
-            ax.scatter(**entry_scatter)
-            ax.scatter(**target_scatter)
-            ax.scatter(**stop_scatter)
-
-            # Speichere Chart in BytesIO
-            img_bio = BytesIO()
-            fig.savefig(img_bio, format='png', bbox_inches='tight', 
-                       facecolor='#1a1a1a', edgecolor='none')
-            img_bio.seek(0)
-            plt.close(fig)
-
-            logger.info("Candlestick Chart erfolgreich erstellt")
-            return img_bio
+            except Exception as plot_error:
+                logger.error(f"Fehler beim Erstellen des Plots: {plot_error}")
+                return None
 
         except Exception as e:
-            logger.error(f"Fehler beim Erstellen des Prediction Charts: {e}")
+            logger.error(f"Fehler bei der Chart-Erstellung: {e}")
             return None
 
     def analyze_trend(self) -> Dict[str, Any]:

@@ -29,7 +29,7 @@ class AutomatedSignalGenerator:
 
         logger.info("Signal Generator initialisiert")
 
-    async def fetch_market_data(self) -> Dict[str, Any]:
+    def fetch_market_data(self) -> Dict[str, Any]:
         """Holt Marktdaten von verschiedenen Quellen"""
         try:
             data = {}
@@ -46,7 +46,7 @@ class AutomatedSignalGenerator:
             if response.status_code == 200:
                 data['coingecko'] = response.json()
 
-            # Solana RPC Daten (Beispiel für Blockzeit)
+            # Solana RPC Daten
             rpc_payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -55,6 +55,13 @@ class AutomatedSignalGenerator:
             response = requests.post(self.solana_rpc, json=rpc_payload)
             if response.status_code == 200:
                 data['solana_rpc'] = response.json()
+
+            # DEX Daten für Chart Updates
+            dex_data = self.dex_connector.get_market_info("SOL")
+            if dex_data and dex_data.get('price', 0) > 0:
+                data['dex'] = dex_data
+                # Aktualisiere Chart-Daten häufiger
+                self.chart_analyzer.update_price_data(self.dex_connector, "SOL")
 
             logger.info("Marktdaten erfolgreich abgerufen")
             return data
@@ -93,17 +100,22 @@ class AutomatedSignalGenerator:
 
             logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
 
-            # DEX Daten
-            dex_market_info = self.dex_connector.get_market_info("SOL")
-            if not dex_market_info or dex_market_info.get('price', 0) == 0:
-                logger.error("Keine DEX-Marktdaten verfügbar oder ungültiger Preis")
+            # Hole Marktdaten und aktualisiere Charts
+            market_data = self.fetch_market_data()
+            if not market_data.get('dex'):
+                logger.error("Keine DEX-Marktdaten verfügbar")
                 return
 
+            dex_market_info = market_data['dex']
             current_price = float(dex_market_info.get('price', 0))
             logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
 
-            # Aktualisiere Chart-Daten
+            # Aktualisiere Chart-Daten erneut für die aktuelle Analyse
             self.chart_analyzer.update_price_data(self.dex_connector, "SOL")
+            if self.chart_analyzer.data.empty:
+                logger.error("Keine Chart-Daten verfügbar für die Analyse")
+                return
+
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
@@ -130,6 +142,19 @@ class AutomatedSignalGenerator:
                                   f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
                                   f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
                                   f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
+
+                        # Versuche Chart zu generieren bevor das Signal gesendet wird
+                        chart_image = self.chart_analyzer.create_prediction_chart(
+                            entry_price=processed_signal['entry'],
+                            target_price=processed_signal['take_profit'],
+                            stop_loss=processed_signal['stop_loss']
+                        )
+
+                        if chart_image:
+                            logger.info("Chart erfolgreich generiert")
+                        else:
+                            logger.error("Chart konnte nicht generiert werden")
+
                         self._notify_users_about_signal(processed_signal)
                         self.total_signals_generated += 1
 
