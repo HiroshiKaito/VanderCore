@@ -62,5 +62,50 @@ async def test_ai_trading():
     except Exception as e:
         logger.error(f"Fehler beim Testen: {e}")
 
+
+async def test_model_training():
+    """Test des Modelltrainings und der Vorhersagequalität"""
+    try:
+        engine = AITradingEngine()
+
+        # Erstelle Trainingsdaten mit klarem Trend
+        dates = pd.date_range(start='2025-01-01', end='2025-01-10', freq='h')
+        train_data = pd.DataFrame({
+            'open': [100 + i * 0.1 for i in range(len(dates))],
+            'high': [100 + i * 0.15 for i in range(len(dates))],
+            'low': [100 + i * 0.05 for i in range(len(dates))],
+            'close': [100 + i * 0.1 for i in range(len(dates))],
+            'volume': [1000000 + i * 1000 for i in range(len(dates))],
+            'sentiment_score': [0.6 + (i % 5) * 0.1 for i in range(len(dates))],
+            'timestamp': dates
+        })
+
+        # Trainiere Modell
+        engine.train_model(train_data)
+
+        # Teste Vorhersage auf Testdaten
+        test_dates = pd.date_range(start='2025-01-11', end='2025-01-12', freq='h')
+        test_data = pd.DataFrame({
+            'open': [110 + i * 0.1 for i in range(len(test_dates))],
+            'high': [110 + i * 0.15 for i in range(len(test_dates))],
+            'low': [110 + i * 0.05 for i in range(len(test_dates))],
+            'close': [110 + i * 0.1 for i in range(len(test_dates))],
+            'volume': [1100000 + i * 1000 for i in range(len(test_dates))],
+            'sentiment_score': [0.7 for _ in range(len(test_dates))],
+            'timestamp': test_dates
+        })
+
+        prediction = await engine.predict_next_move(test_data)
+
+        logger.info("\nModelltraining und Vorhersage Test:")
+        logger.info(f"Trainingsdaten Shape: {train_data.shape}")
+        logger.info(f"Vorhersage: {prediction.get('prediction', 'N/A')}")
+        logger.info(f"Konfidenz: {prediction.get('confidence', 0):.2f}")
+        logger.info(f"Signal: {prediction.get('signal', 'neutral')}")
+
+    except Exception as e:
+        logger.error(f"Fehler beim Modelltraining Test: {e}")
+
 if __name__ == "__main__":
     asyncio.run(test_ai_trading())
+    asyncio.run(test_model_training())

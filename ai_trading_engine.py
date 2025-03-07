@@ -101,6 +101,7 @@ class AITradingEngine:
                 'price_momentum', 'volume_intensity', 'price_acceleration',
                 'sentiment_ma', 'sentiment_std', 'sentiment_momentum'
             ]
+            self.feature_columns = feature_columns #Added for later use
 
             # Entferne NaN-Werte
             df = df.fillna(method='ffill').fillna(method='bfill')
@@ -201,12 +202,25 @@ class AITradingEngine:
             sentiment_impact = (sentiment_score - 0.5) * 2  # Konvertiere zu [-1, 1]
 
             # Gewichtete Summe aller Faktoren
+            weights = {
+                'price': 0.35,    # Erhöht von 0.3
+                'volume': 0.25,   # Reduziert von 0.3
+                'volatility': 0.2,
+                'sentiment': 0.2
+            }
+
             confidence = (
-                price_confidence * 0.4 +
-                volume_confidence * 0.2 +
-                volatility_confidence * 0.2 +
-                sentiment_impact * 0.2
+                price_confidence * weights['price'] +
+                volume_confidence * weights['volume'] +
+                volatility_confidence * weights['volatility'] +
+                sentiment_impact * weights['sentiment']
             )
+
+            logger.debug(f"Konfidenzberechnung:"
+                        f"\n - Preis-Konfidenz: {price_confidence:.2f}"
+                        f"\n - Volumen-Konfidenz: {volume_confidence:.2f}"
+                        f"\n - Volatilitäts-Konfidenz: {volatility_confidence:.2f}"
+                        f"\n - Sentiment-Einfluss: {sentiment_impact:.2f}")
 
             # Normalisiere auf [0, 1]
             return max(0.0, min(1.0, confidence))
@@ -216,11 +230,17 @@ class AITradingEngine:
             return 0.0
 
     def train_model(self, training_data: pd.DataFrame):
-        """Trainiert das Random Forest Modell"""
-        if self.model is None:
-            self._init_model()
-
+        """Trainiert das Random Forest Modell mit erweitertem Feature-Set"""
         try:
+            if self.model is None:
+                self._init_model()
+                logger.info("Modell neu initialisiert für Training")
+
+            # Füge Sentiment-Daten hinzu falls verfügbar
+            if 'sentiment_score' not in training_data.columns:
+                training_data['sentiment_score'] = 0.5  # Neutral als Default
+                logger.info("Sentiment-Score nicht gefunden, verwende neutralen Wert")
+
             X = self.prepare_features(training_data[:-1])  # Alle außer dem letzten Datenpunkt
             y = training_data['close'].iloc[1:].values  # Verschiebe um einen Zeitschritt
 
@@ -228,11 +248,30 @@ class AITradingEngine:
                 logger.error("Keine Trainingsdaten verfügbar")
                 return
 
-            self.model.fit(X, y)
-            logger.info("Modell erfolgreich trainiert")
+            # Modell Training mit zusätzlichem Logging
+            logger.info(f"Starte Modelltraining mit {len(X)} Datenpunkten")
+
+            try:
+                self.model.fit(X, y)
+            except Exception as e:
+                logger.error(f"Fehler beim Modelltraining: {e}")
+                self._init_model()  # Reinitialisiere das Modell
+                self.model.fit(X, y)  # Versuche erneut
+
+            # Evaluiere Modellperformance
+            train_predictions = self.model.predict(X)
+            mse = np.mean((y - train_predictions) ** 2)
+            rmse = np.sqrt(mse)
+            r2 = self.model.score(X, y)
+
+            logger.info(f"Modelltraining abgeschlossen:"
+                       f"\n - RMSE: {rmse:.4f}"
+                       f"\n - R²: {r2:.4f}"
+                       f"\n - Feature Importance: {list(zip(self.feature_columns, self.model.feature_importances_))}")
 
         except Exception as e:
-            logger.error(f"Fehler beim Training: {e}")
+            logger.error(f"Kritischer Fehler beim Training: {e}")
+            self._init_model()  # Stelle sicher, dass wir ein frisches Modell haben
 
     def _predict_with_technical_analysis(self, data: pd.DataFrame) -> Dict[str, Any]:
         """Fallback-Vorhersage basierend auf technischer Analyse"""

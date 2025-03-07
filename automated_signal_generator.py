@@ -1,3 +1,4 @@
+"""AI Trading Engine mit ML-basierter Signalgenerierung und Marktanalyse"""
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
@@ -93,7 +94,7 @@ class AutomatedSignalGenerator:
             logger.info("Signal-Generator gestoppt")
 
     def generate_signals(self):
-        """Generiert Trading-Signale basierend auf technischer Analyse"""
+        """Generiert Trading-Signale basierend auf KI-Analyse"""
         try:
             current_time = datetime.now(pytz.UTC)
             self.last_check_time = current_time
@@ -110,12 +111,13 @@ class AutomatedSignalGenerator:
             current_price = float(dex_market_info.get('price', 0))
             logger.info(f"Aktueller SOL Preis: {current_price:.2f} USDC")
 
-            # Aktualisiere Chart-Daten erneut für die aktuelle Analyse
+            # Aktualisiere Chart-Daten für die Analyse
             self.chart_analyzer.update_price_data(self.dex_connector, "SOL")
             if self.chart_analyzer.data.empty:
                 logger.error("Keine Chart-Daten verfügbar für die Analyse")
                 return
 
+            # Führe erweiterte Marktanalyse durch
             trend_analysis = self.chart_analyzer.analyze_trend()
             support_resistance = self.chart_analyzer.get_support_resistance()
 
@@ -135,6 +137,8 @@ class AutomatedSignalGenerator:
                 processed_signal = self.signal_processor.process_signal(signal)
                 if processed_signal:
                     logger.info(f"Signal erstellt - Qualität: {processed_signal['signal_quality']}/10")
+
+                    # Reduzierte Qualitätsschwelle für mehr Signale
                     if processed_signal['signal_quality'] >= 3:  # Reduziert von 4 auf 3
                         logger.info(f"Signal Details:"
                                   f"\n - Richtung: {processed_signal['direction']}"
@@ -143,7 +147,7 @@ class AutomatedSignalGenerator:
                                   f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
                                   f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
 
-                        # Versuche Chart zu generieren bevor das Signal gesendet wird
+                        # Versuche Chart zu generieren
                         chart_image = self.chart_analyzer.create_prediction_chart(
                             entry_price=processed_signal['entry'],
                             target_price=processed_signal['take_profit'],
@@ -155,6 +159,7 @@ class AutomatedSignalGenerator:
                         else:
                             logger.error("Chart konnte nicht generiert werden")
 
+                        # Benachrichtige Benutzer
                         self._notify_users_about_signal(processed_signal)
                         self.total_signals_generated += 1
 
@@ -273,26 +278,27 @@ class AutomatedSignalGenerator:
             return None
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any],
-                               strength: float,
-                               expected_profit: float) -> float:
+                              strength: float,
+                              expected_profit: float) -> float:
         """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
             # Grundlegende Trend-Bewertung
-            trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
+            trend_base = float(8 if trend_analysis['trend'] == 'aufwärts' else 7)
 
             # Trendstärke-Bewertung mit Berücksichtigung der Metriken
             metrics = trend_analysis.get('metriken', {})
-            momentum = abs(metrics.get('momentum', 0))
-            volatility = metrics.get('volatilität', 0)
+            momentum = abs(float(metrics.get('momentum', 0)))
+            volatility = float(metrics.get('volatilität', 0))
 
             # Momentum-basierte Stärkebewertung
-            strength_score = min(momentum * 20, 10)  # Erhöhte Sensitivität
+            strength_score = min(float(momentum * 20), 10.0)  # Erhöhte Sensitivität
 
             # Volatilitäts-Anpassung
-            volatility_factor = max(0.5, 1 - volatility)  # Reduziere Score bei hoher Volatilität
+            volatility_factor = max(0.5, 1.0 - float(volatility))  # Reduziere Score bei hoher Volatilität
             strength_score *= volatility_factor
 
             # Profit-Bewertung - Progressive Skala
+            expected_profit = float(expected_profit)
             if expected_profit <= 1.0:
                 profit_score = expected_profit * 5  # 0.5% = 2.5 Punkte
             elif expected_profit <= 2.0:
@@ -301,8 +307,8 @@ class AutomatedSignalGenerator:
                 profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
 
             # Volumen-Trend Bewertung
-            volume_trend = metrics.get('volumen_trend', 0)
-            volume_score = min(abs(volume_trend) * 10, 10)
+            volume_trend = float(metrics.get('volumen_trend', 0))
+            volume_score = min(abs(volume_trend) * 10, 10.0)
 
             # Gewichtete Summe mit Volumen-Einfluss
             weights = (0.35, 0.25, 0.25, 0.15)  # Trend, Stärke, Profit, Volumen
@@ -320,7 +326,7 @@ class AutomatedSignalGenerator:
                         f"\n - Volume Score: {volume_score} (Gewicht: {weights[3]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
-            return round(min(quality, 10), 1)
+            return round(min(quality, 10.0), 1)
 
         except Exception as e:
             logger.error(f"Fehler bei der Qualitätsberechnung: {e}")
@@ -351,6 +357,7 @@ class AutomatedSignalGenerator:
             except Exception as chart_error:
                 logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
 
+            # Erstelle Signal-Nachricht
             signal_message = (
                 f"⚡ SCHNELLES TRADING SIGNAL!\n\n"
                 f"Pair: {signal['pair']}\n"
