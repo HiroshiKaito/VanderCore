@@ -9,6 +9,8 @@ import subprocess
 import json
 import signal
 import atexit
+import shutil
+import sys
 
 # Logging-Konfiguration
 logging.basicConfig(
@@ -29,17 +31,49 @@ updater = None
 dispatcher = None
 cloudflared_process = None
 
+def check_cloudflared():
+    """Überprüft ob cloudflared installiert ist"""
+    try:
+        # Prüfe ob cloudflared im PATH verfügbar ist
+        cloudflared_path = shutil.which('cloudflared')
+        if cloudflared_path:
+            logger.info(f"cloudflared gefunden: {cloudflared_path}")
+            return True
+
+        logger.error("""
+        cloudflared wurde nicht gefunden! 
+
+        Bitte installieren Sie cloudflared manuell:
+        1. Besuchen Sie https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation
+        2. Laden Sie das entsprechende Installationspaket herunter
+        3. Folgen Sie den Installationsanweisungen
+        4. Starten Sie den Bot neu
+        """)
+        return False
+    except Exception as e:
+        logger.error(f"Fehler bei der cloudflared-Überprüfung: {e}")
+        return False
+
 def setup_cloudflare_tunnel():
     """Cloudflare Tunnel Setup"""
     try:
+        # Prüfe ob cloudflared installiert ist
+        if not check_cloudflared():
+            return None, None
+
         # Starte cloudflared tunnel
         cmd = ['cloudflared', 'tunnel', '--url', 'http://localhost:5000']
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True
-        )
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                preexec_fn=os.setpgrp  # Verhindert, dass der Prozess mit dem Parent beendet wird
+            )
+        except FileNotFoundError:
+            logger.error("cloudflared konnte nicht ausgeführt werden")
+            return None, None
 
         # Registriere Cleanup-Handler
         atexit.register(lambda: process.terminate() if process else None)
@@ -71,6 +105,7 @@ def setup_webhook():
 
         # Webhook URL
         webhook_url = f"{tunnel_url}/telegram-webhook"
+        logger.info(f"Verwende Webhook URL: {webhook_url}")
 
         # Setze Webhook
         updater.bot.set_webhook(webhook_url)
@@ -144,12 +179,25 @@ def main():
         logger.info("Starte Flask Server...")
         app.run(
             host='0.0.0.0',
-            port=5000
+            port=5000,
+            debug=False,  # Deaktiviere Debug-Modus für Produktion
+            use_reloader=False  # Verhindert doppeltes Starten
         )
 
     except Exception as e:
         logger.error(f"Kritischer Fehler: {e}")
         raise
 
+    finally:
+        cleanup()
+
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot wird durch Benutzer beendet")
+        cleanup()
+    except Exception as e:
+        logger.error(f"=== Kritischer Fehler beim Starten des Bots: {e} ===")
+        cleanup()
+        sys.exit(1)
