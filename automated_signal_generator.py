@@ -8,6 +8,7 @@ import requests
 from dex_connector import DexConnector
 from chart_analyzer import ChartAnalyzer
 from signal_processor import SignalProcessor
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ class AutomatedSignalGenerator:
     def stop(self):
         """Stoppt den Signal-Generator"""
         if self.is_running:
+            logger.info("Stoppe Signal-Generator...")
             self.scheduler.remove_job('signal_generator')
             self.scheduler.shutdown()
             self.is_running = False
@@ -127,7 +129,7 @@ class AutomatedSignalGenerator:
 
             logger.info(f"[{current_time}] ⚡ Schnelle Marktanalyse...")
 
-            # Hole Marktdaten und aktualisiere Charts
+            # Hole Marktdaten
             market_data = self.fetch_market_data()
             if not market_data.get('dex'):
                 logger.error("Keine DEX-Marktdaten verfügbar")
@@ -149,9 +151,9 @@ class AutomatedSignalGenerator:
 
             # Detaillierte Marktanalyse Logs
             logger.info(f"Marktanalyse - Trend: {trend_analysis.get('trend')}, "
-                       f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
+                     f"Stärke: {trend_analysis.get('stärke', 0):.2f}")
             logger.info(f"Support/Resistance - Support: {support_resistance.get('support', 0):.2f}, "
-                       f"Resistance: {support_resistance.get('resistance', 0):.2f}")
+                     f"Resistance: {support_resistance.get('resistance', 0):.2f}")
 
             # Erstelle Signal basierend auf Analyse
             signal = self._create_signal_from_analysis(
@@ -167,23 +169,11 @@ class AutomatedSignalGenerator:
                     # Reduzierte Qualitätsschwelle für mehr Signale
                     if processed_signal['signal_quality'] >= 3:  # Reduziert von 4 auf 3
                         logger.info(f"Signal Details:"
-                                  f"\n - Richtung: {processed_signal['direction']}"
-                                  f"\n - Entry: {processed_signal['entry']:.2f}"
-                                  f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
-                                  f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
-                                  f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
-
-                        # Versuche Chart zu generieren
-                        chart_image = self.chart_analyzer.create_prediction_chart(
-                            entry_price=processed_signal['entry'],
-                            target_price=processed_signal['take_profit'],
-                            stop_loss=processed_signal['stop_loss']
-                        )
-
-                        if chart_image:
-                            logger.info("Chart erfolgreich generiert")
-                        else:
-                            logger.error("Chart konnte nicht generiert werden")
+                                f"\n - Richtung: {processed_signal['direction']}"
+                                f"\n - Entry: {processed_signal['entry']:.2f}"
+                                f"\n - Take Profit: {processed_signal['take_profit']:.2f}"
+                                f"\n - Stop Loss: {processed_signal['stop_loss']:.2f}"
+                                f"\n - Erwarteter Profit: {processed_signal['expected_profit']:.2f}%")
 
                         # Benachrichtige Benutzer
                         self._notify_users_about_signal(processed_signal)
@@ -196,8 +186,8 @@ class AutomatedSignalGenerator:
                             self.signal_intervals.append(interval)
                             avg_interval = sum(self.signal_intervals) / len(self.signal_intervals)
                             logger.info(f"📊 Signal-Statistiken:"
-                                      f"\n - Durchschnittliches Intervall: {avg_interval:.1f} Minuten"
-                                      f"\n - Gesamtzahl Signale: {self.total_signals_generated}")
+                                    f"\n - Durchschnittliches Intervall: {avg_interval:.1f} Minuten"
+                                    f"\n - Gesamtzahl Signale: {self.total_signals_generated}")
 
                         self.last_signal_time = current_time
                     else:
@@ -205,7 +195,7 @@ class AutomatedSignalGenerator:
                 else:
                     logger.info("Signal konnte nicht verarbeitet werden")
             else:
-                logger.info("Kein Signal basierend auf aktueller Analyse")
+                logger.debug("Kein Signal basierend auf aktueller Analyse")
 
         except Exception as e:
             logger.error(f"Fehler bei der Signal-Generierung: {e}")
@@ -278,13 +268,6 @@ class AutomatedSignalGenerator:
                 logger.info(f"Kein Signal - Qualität zu niedrig: {signal_quality}/10")
                 return None
 
-            logger.info(f"Neues Signal erstellt:"
-                       f"\n - Trend: {trend}"
-                       f"\n - Trendstärke: {strength:.2f}%"
-                       f"\n - Take-Profit-Multiplikator: {tp_multiplier:.1f}x"
-                       f"\n - Erwarteter Profit: {expected_profit:.1f}%"
-                       f"\n - Signalqualität: {signal_quality}/10")
-
             return {
                 'pair': 'SOL/USD',
                 'direction': direction,
@@ -292,11 +275,13 @@ class AutomatedSignalGenerator:
                 'stop_loss': stop_loss,
                 'take_profit': take_profit,
                 'timestamp': datetime.now(pytz.UTC).timestamp(),
-                'dex_connector': self.dex_connector,
                 'token_address': "SOL",
                 'expected_profit': expected_profit,
                 'signal_quality': signal_quality,
                 'trend_strength': strength,
+                'ai_confidence': 0.85,
+                'risk_score': 6.5,
+                'market_sentiment': 0.7
             }
 
         except Exception as e:
@@ -361,18 +346,13 @@ class AutomatedSignalGenerator:
     def _notify_users_about_signal(self, signal: Dict[str, Any]):
         """Benachrichtigt Benutzer über neue Trading-Signale"""
         try:
-            logger.info(f"Starte Benachrichtigung über neues Signal. Aktive Nutzer: {len(self.bot.active_users)}")
-            logger.debug(f"Aktive Nutzer IDs: {self.bot.active_users}")
-
-            if not self.bot.active_users:
-                logger.warning("Keine aktiven Nutzer gefunden!")
+            if not self.bot or not self.bot.active_users:
+                logger.warning("Keine aktiven Nutzer oder Bot nicht verfügbar")
                 return
 
-            # Hole das aktuelle Wallet-Guthaben
-            balance = self.bot.wallet_manager.get_balance()
+            logger.info(f"Sende Signal an {len(self.bot.active_users)} aktive Nutzer")
 
-            # Erstelle Prediction Chart
-            logger.info("Erstelle Chart für Trading Signal...")
+            # Erstelle Chart
             chart_image = None
             try:
                 chart_image = self.chart_analyzer.create_prediction_chart(
@@ -380,57 +360,54 @@ class AutomatedSignalGenerator:
                     target_price=signal['take_profit'],
                     stop_loss=signal['stop_loss']
                 )
+                logger.info("Chart für Signal erstellt")
             except Exception as chart_error:
                 logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
 
             # Erstelle Signal-Nachricht
             signal_message = (
-                f"⚡ SCHNELLES TRADING SIGNAL!\n\n"
+                f"🎯 Trading Signal erkannt!\n\n"
                 f"Pair: {signal['pair']}\n"
-                f"Signal: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
-                f"Einstieg: {signal['entry']:.2f} USD\n"
-                f"Stop Loss: {signal['stop_loss']:.2f} USD\n"
-                f"Take Profit: {signal['take_profit']:.2f} USD\n\n"
-                f"📈 Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
-                f"✨ Signal-Qualität: {signal['signal_quality']}/10\n\n"
-                f"💰 Verfügbares Guthaben: {balance:.4f} SOL\n\n"
-                f"Schnell reagieren! Der Markt wartet nicht! 🚀"
+                f"Position: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
+                f"Entry: {signal['entry']:.2f} USDC\n"
+                f"Stop Loss: {signal['stop_loss']:.2f} USDC\n"
+                f"Take Profit: {signal['take_profit']:.2f} USDC\n\n"
+                f"📊 Analyse:\n"
+                f"• Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
+                f"• Signal Qualität: {signal['signal_quality']}/10\n"
+                f"• Trend Stärke: {signal['trend_strength']:.2f}\n\n"
+                f"💡 Empfehlung: "
+                f"{'Starkes Signal zum Einstieg!' if signal['signal_quality'] >= 7.0 else 'Mit Vorsicht handeln.'}"
             )
 
-            logger.info(f"Signal-Nachricht vorbereitet: {len(signal_message)} Zeichen")
-
-            # Erstelle Inline-Buttons für die Benutzerinteraktion
             keyboard = [
                 [
-                    {"text": "✅ Handeln", "callback_data": "trade_signal_new"},
-                    {"text": "❌ Ignorieren", "callback_data": "ignore_signal"}
+                    InlineKeyboardButton("✅ Handeln", callback_data="trade_signal_new"),
+                    InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
                 ]
             ]
 
-            # Sende eine einzelne Nachricht mit Chart und Signal-Details
+            # Sende Signal an alle aktiven Nutzer
             for user_id in self.bot.active_users:
                 try:
-                    logger.info(f"Versuche Signal an User {user_id} zu senden...")
                     if chart_image:
-                        # Sende eine einzelne Nachricht mit Chart und Text
+                        # Sende Nachricht mit Chart
                         self.bot.updater.bot.send_photo(
                             chat_id=user_id,
                             photo=chart_image,
                             caption=signal_message,
-                            reply_markup={"inline_keyboard": keyboard}
+                            reply_markup=InlineKeyboardMarkup(keyboard)
                         )
-                        logger.info(f"Trading Signal mit Chart erfolgreich an User {user_id} gesendet")
                     else:
-                        # Fallback: Sende nur Text wenn kein Chart verfügbar
+                        # Sende Nachricht ohne Chart
                         self.bot.updater.bot.send_message(
                             chat_id=user_id,
-                            text=signal_message + "\n\n⚠️ Chart konnte nicht generiert werden.",
-                            reply_markup={"inline_keyboard": keyboard}
+                            text=signal_message,
+                            reply_markup=InlineKeyboardMarkup(keyboard)
                         )
-                        logger.warning(f"Trading Signal ohne Chart an User {user_id} gesendet")
-
-                except Exception as send_error:
-                    logger.error(f"Fehler beim Senden der Nachricht an User {user_id}: {send_error}")
+                    logger.info(f"Signal erfolgreich an User {user_id} gesendet")
+                except Exception as e:
+                    logger.error(f"Fehler beim Senden des Signals an User {user_id}: {e}")
 
         except Exception as e:
-            logger.error(f"Fehler beim Senden der Signal-Benachrichtigung: {e}")
+            logger.error(f"Fehler bei der Signal-Benachrichtigung: {e}")
