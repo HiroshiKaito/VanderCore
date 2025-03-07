@@ -17,11 +17,18 @@ async def test_ai_trading():
         # Erstelle Test-Daten
         dates = pd.date_range(start='2025-01-01', end='2025-03-06', freq='h')
         test_data = pd.DataFrame({
+            'open': [100 + i * 0.1 for i in range(len(dates))],
+            'high': [100 + i * 0.15 for i in range(len(dates))],
+            'low': [100 + i * 0.05 for i in range(len(dates))],
             'close': [100 + i * 0.1 for i in range(len(dates))],  # Aufsteigender Trend
             'volume': [1000000 + i * 1000 for i in range(len(dates))],  # Steigendes Volumen
             'timestamp': dates
         })
         logger.info(f"Test-Daten erstellt mit {len(dates)} Datenpunkten")
+
+        # Teste Feature-Extraktion
+        features = engine.prepare_features(test_data)
+        logger.info(f"Feature Shape: {features.shape}")
 
         # Teste Vorhersage
         prediction = await engine.predict_next_move(test_data)
@@ -42,6 +49,13 @@ async def test_ai_trading():
                 if isinstance(data, dict):
                     logger.info(f"{source}: Score {data.get('score', 0):.2f}, "
                             f"Konfidenz {data.get('confidence', 0):.2f}")
+
+            # Teste Risikomanagement
+            risk_info = prediction.get('risk_management', {})
+            logger.info("\nRisikomanagement:")
+            logger.info(f"Position Size: {risk_info.get('position_size', 0):.2f}")
+            logger.info(f"Stoploss: {risk_info.get('stoploss', 0):.2f}")
+            logger.info(f"Takeprofit: {risk_info.get('takeprofit', 0):.2f}")
         else:
             logger.warning("Keine gültige Vorhersage erhalten")
 

@@ -68,24 +68,38 @@ class AITradingEngine:
             df['volume_sma'] = ta.trend.sma_indicator(df['volume'], window=20)
             df['volume_ema'] = ta.trend.ema_indicator(df['volume'], window=20)
 
+            # Neue technische Indikatoren
+            df['stoch_k'] = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close']).stoch()
+            df['stoch_d'] = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close']).stoch_signal()
+            df['adx'] = ta.trend.ADXIndicator(df['high'], df['low'], df['close']).adx()
+
             # Preisbewegungen
             df['price_change'] = df['close'].pct_change()
             df['volatility'] = df['close'].rolling(window=20).std()
             df['volume_change'] = df['volume'].pct_change()
             df['trend_strength'] = abs(df['price_change'].rolling(window=10).mean())
 
+            # Erweiterte Preismetriken
+            df['price_momentum'] = df['close'].diff(periods=5) / df['close'].shift(5)
+            df['volume_intensity'] = df['volume'] / df['volume'].rolling(window=20).mean()
+            df['price_acceleration'] = df['price_change'].diff()
+
             # Sentiment Features
             if 'sentiment_score' in df.columns:
                 df['sentiment_ma'] = df['sentiment_score'].rolling(window=5).mean()
                 df['sentiment_std'] = df['sentiment_score'].rolling(window=5).std()
+                df['sentiment_momentum'] = df['sentiment_score'].diff()
             else:
                 df['sentiment_ma'] = 0.5
                 df['sentiment_std'] = 0.1
+                df['sentiment_momentum'] = 0
 
             feature_columns = [
                 'rsi', 'macd', 'macd_signal', 'bb_upper', 'bb_lower', 'bb_mavg',
-                'volume_sma', 'volume_ema', 'price_change', 'volatility', 
-                'volume_change', 'trend_strength', 'sentiment_ma', 'sentiment_std'
+                'volume_sma', 'volume_ema', 'stoch_k', 'stoch_d', 'adx',
+                'price_change', 'volatility', 'volume_change', 'trend_strength',
+                'price_momentum', 'volume_intensity', 'price_acceleration',
+                'sentiment_ma', 'sentiment_std', 'sentiment_momentum'
             ]
 
             # Entferne NaN-Werte
@@ -93,7 +107,10 @@ class AITradingEngine:
 
             # Skaliere Features
             features = df[feature_columns].values
-            return self.scaler.fit_transform(features)
+            scaled_features = self.scaler.fit_transform(features)
+
+            logger.debug(f"Feature-Extraktion abgeschlossen - Shape: {scaled_features.shape}")
+            return scaled_features
 
         except Exception as e:
             logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")

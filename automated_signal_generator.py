@@ -189,6 +189,7 @@ class AutomatedSignalGenerator:
         try:
             trend = trend_analysis.get('trend', 'neutral')
             strength = trend_analysis.get('stärke', 0)
+            metrics = trend_analysis.get('metriken', {})
 
             # Reduzierte Mindest-Trendstärke
             if trend == 'neutral' or strength < 0.03:  # Reduziert von 0.05 auf 0.03
@@ -199,11 +200,26 @@ class AutomatedSignalGenerator:
             support = support_resistance.get('support', 0)
             resistance = support_resistance.get('resistance', 0)
 
-            # Dynamische Take-Profit-Berechnung basierend auf Trend
+            # Zusätzliche Level-Analyse
+            support_levels = support_resistance.get('levels', {}).get('support_levels', [])
+            resistance_levels = support_resistance.get('levels', {}).get('resistance_levels', [])
+
+            # Dynamische Take-Profit-Berechnung basierend auf Trend und Level-Distanz
             base_tp_percent = 0.01  # Reduziert von 0.015 auf 0.01 (1%)
-            # Erhöhe Take-Profit bei starkem Trend
-            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5))
+
+            # Erhöhe Take-Profit bei starkem Trend und klaren Level-Abständen
+            level_multiplier = 1.0
+            if len(support_levels) > 0 and len(resistance_levels) > 0:
+                level_range = (resistance - support) / current_price
+                level_multiplier = min(2.0, 1.0 + level_range * 10)
+
+            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5) * level_multiplier)
             dynamic_tp_percent = base_tp_percent * tp_multiplier
+
+            # Berücksichtige Volumen-Trend
+            volume_trend = metrics.get('volumen_trend', 0)
+            if abs(volume_trend) > 0.1:  # Signifikante Volumenänderung
+                dynamic_tp_percent *= (1 + min(abs(volume_trend), 0.5))
 
             if trend == 'aufwärts':
                 entry = current_price
@@ -264,8 +280,17 @@ class AutomatedSignalGenerator:
             # Grundlegende Trend-Bewertung
             trend_base = 8 if trend_analysis['trend'] == 'aufwärts' else 7
 
-            # Trendstärke-Bewertung
-            strength_score = min(strength * 30, 10)  # Erhöhte Sensitivität
+            # Trendstärke-Bewertung mit Berücksichtigung der Metriken
+            metrics = trend_analysis.get('metriken', {})
+            momentum = abs(metrics.get('momentum', 0))
+            volatility = metrics.get('volatilität', 0)
+
+            # Momentum-basierte Stärkebewertung
+            strength_score = min(momentum * 20, 10)  # Erhöhte Sensitivität
+
+            # Volatilitäts-Anpassung
+            volatility_factor = max(0.5, 1 - volatility)  # Reduziere Score bei hoher Volatilität
+            strength_score *= volatility_factor
 
             # Profit-Bewertung - Progressive Skala
             if expected_profit <= 1.0:
@@ -275,18 +300,24 @@ class AutomatedSignalGenerator:
             else:
                 profit_score = 8 + (min(expected_profit - 2.0, 2.0))  # Max 10 Punkte
 
-            # Gewichtete Summe
-            weights = (0.4, 0.3, 0.3)  # Mehr Gewicht auf Trend
+            # Volumen-Trend Bewertung
+            volume_trend = metrics.get('volumen_trend', 0)
+            volume_score = min(abs(volume_trend) * 10, 10)
+
+            # Gewichtete Summe mit Volumen-Einfluss
+            weights = (0.35, 0.25, 0.25, 0.15)  # Trend, Stärke, Profit, Volumen
             quality = (
-                trend_base * weights[0] +      # Trend-Basis
-                strength_score * weights[1] +   # Trendstärke
-                profit_score * weights[2]       # Profit-Potenzial
+                trend_base * weights[0] +         # Trend-Basis
+                strength_score * weights[1] +     # Trendstärke
+                profit_score * weights[2] +       # Profit-Potenzial
+                volume_score * weights[3]         # Volumen-Trend
             )
 
             logger.debug(f"Signal Qualitätsberechnung:"
                         f"\n - Trend Score: {trend_base} (Gewicht: {weights[0]:.1f})"
                         f"\n - Strength Score: {strength_score} (Gewicht: {weights[1]:.1f})"
                         f"\n - Profit Score: {profit_score} (Gewicht: {weights[2]:.1f})"
+                        f"\n - Volume Score: {volume_score} (Gewicht: {weights[3]:.1f})"
                         f"\n - Finale Qualität: {quality:.1f}/10")
 
             return round(min(quality, 10), 1)
