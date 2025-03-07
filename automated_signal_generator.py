@@ -73,17 +73,43 @@ class AutomatedSignalGenerator:
 
     def start(self):
         """Startet den automatischen Signal-Generator"""
-        if not self.is_running:
-            logger.info("Starte automatischen Signal-Generator...")
-            self.scheduler.add_job(
-                self.generate_signals,
-                'interval',
-                seconds=5,  # Reduziert von 10 auf 5 Sekunden für häufigere Signale
-                id='signal_generator'
-            )
-            self.scheduler.start()
-            self.is_running = True
-            logger.info("Signal-Generator läuft jetzt im Hintergrund - Überprüfung alle 5 Sekunden")
+        try:
+            if not self.is_running:
+                logger.info("Starte automatischen Signal-Generator...")
+
+                # Überprüfe Komponenten
+                if not self.dex_connector:
+                    raise ValueError("DEX Connector nicht initialisiert")
+                if not self.signal_processor:
+                    raise ValueError("Signal Processor nicht initialisiert")
+                if not self.chart_analyzer:
+                    raise ValueError("Chart Analyzer nicht initialisiert")
+
+                # Starte Job
+                self.scheduler.add_job(
+                    self.generate_signals,
+                    'interval',
+                    seconds=5,  # Überprüfung alle 5 Sekunden
+                    id='signal_generator',
+                    replace_existing=True
+                )
+                self.scheduler.start()
+                self.is_running = True
+
+                # Status Update
+                market_info = self.dex_connector.get_market_info("SOL")
+                current_price = market_info.get('price', 0) if market_info else 0
+                logger.info(f"Signal-Generator gestartet - "
+                          f"Status: Aktiv, "
+                          f"Intervall: 5s, "
+                          f"Aktueller SOL Preis: {current_price:.2f} USDC")
+            else:
+                logger.info("Signal-Generator läuft bereits")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Starten des Signal-Generators: {e}")
+            self.is_running = False
+            raise
 
     def stop(self):
         """Stoppt den Signal-Generator"""

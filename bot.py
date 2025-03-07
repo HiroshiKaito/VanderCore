@@ -621,23 +621,38 @@ class SolanaWalletBot:
 
             elif query.data == "start_signal_search":
                 # Initialisiere und starte den Signal Generator
-                if not self.signal_generator:
-                    logger.info("Initialisiere Signal Generator...")
-                    self.signal_generator = AutomatedSignalGenerator(
-                        self.dex_connector,
-                        self.signal_processor,
-                        self
-                    )
-                    self.signal_generator.start()
-                    logger.info("Signal Generator erfolgreich gestartet")
+                try:
+                    if not self.signal_generator:
+                        logger.info("Initialisiere Signal Generator...")
+                        self.signal_generator = AutomatedSignalGenerator(
+                            self.dex_connector,
+                            self.signal_processor,
+                            self
+                        )
+                        self.signal_generator.start()
+                        logger.info("Signal Generator erfolgreich gestartet")
+                    elif not self.signal_generator.is_running:
+                        logger.info("Starte existierenden Signal Generator neu...")
+                        self.signal_generator.start()
+                        logger.info("Signal Generator neu gestartet")
+                    else:
+                        logger.info("Signal Generator läuft bereits")
 
-                # Bestätige die Aktivierung der Signal-Suche
-                query.message.reply_text(
-                    "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
-                    "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n"
-                    "Die Signale kannst du auch jederzeit mit /signal abrufen."
-                )
-                logger.info(f"Signal-Suche für User {user_id} aktiviert")
+                    # Bestätige die Aktivierung der Signal-Suche
+                    query.message.reply_text(
+                        "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
+                        "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n"
+                        "Die Signale kannst du auch jederzeit mit /signal abrufen.\n\n"
+                        "Status: 🟢 Signal Generator aktiv"
+                    )
+                    logger.info(f"Signal-Suche für User {user_id} aktiviert")
+
+                except Exception as e:
+                    logger.error(f"Fehler beim Starten des Signal Generators: {e}")
+                    query.message.reply_text(
+                        "❌ Es gab ein Problem beim Starten der Signal-Suche.\n"
+                        "Bitte versuche es erneut oder kontaktiere den Support."
+                    )
 
             elif query.data == "ignore_signal":
                 query.message.delete()
