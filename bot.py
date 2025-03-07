@@ -4,6 +4,9 @@ from datetime import datetime
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler, MessageHandler, Filters
+from telegram.utils.request import Request
+from telegram.error import (TelegramError, Unauthorized, BadRequest,
+                          TimedOut, ChatMigrated, NetworkError)
 import config
 from wallet_manager import WalletManager
 from dex_connector import DexConnector
@@ -14,6 +17,11 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import pandas as pd
 from typing import Dict, Any
 import telegram
+import urllib3
+import certifi
+
+# Konfiguriere sichere HTTPS-Verbindungen
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Update the logging configuration to capture more details
 logging.basicConfig(
@@ -30,7 +38,7 @@ class TelegramBot:
     def __init__(self):
         """Initialisiere den Bot"""
         try:
-            logger.info("Starte Bot-Initialisierung...")
+            logger.info("=== Starte Bot-Initialisierung ===")
 
             # Konfiguration laden und überprüfen
             self.config = config
@@ -48,13 +56,36 @@ class TelegramBot:
             self.pending_operations = {}
             self.user_timezones = {}  # Speichert Zeitzonen pro Benutzer
 
-            # Initialisiere Telegram Updater zuerst
+            # Konfiguriere Request für optimale Verbindung
+            request = Request(
+                con_pool_size=8,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                write_timeout=30.0,
+                retry_on_timeout=True,
+                maximum_retries=3
+            )
+
+            # Initialisiere Telegram Updater mit angepassten Einstellungen
             logger.info("Initialisiere Telegram Updater...")
             try:
-                self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
+                self.updater = Updater(
+                    token=self.config.TELEGRAM_TOKEN,
+                    use_context=True,
+                    request_kwargs={
+                        'read_timeout': 30,
+                        'connect_timeout': 30,
+                        'write_timeout': 30,
+                        'pool_timeout': 30,
+                        'cert': certifi.where(),  # Explizit SSL-Zertifikate konfigurieren
+                        'verify': True,  # SSL-Verifizierung aktivieren
+                        'proxy_url': None,  # Optional: Proxy-URL hier einfügen wenn nötig
+                    },
+                    request=request
+                )
+
                 if not self.updater:
                     raise ValueError("Updater konnte nicht initialisiert werden")
-                logger.info("Telegram Updater erfolgreich initialisiert")
 
                 # Teste Bot-Verbindung
                 me = self.updater.bot.get_me()
@@ -110,6 +141,33 @@ class TelegramBot:
             logger.error(f"Kritischer Fehler bei Bot-Initialisierung: {e}")
             raise
 
+    def run(self):
+        """Startet den Bot"""
+        try:
+            logger.info("Starte Bot...")
+
+            # Prüfe ob Updater initialisiert wurde
+            if not self.updater:
+                raise ValueError("Updater wurde nicht korrekt initialisiert")
+
+            # Starte Polling mit zusätzlichen Debug-Informationen
+            logger.info("Starte Polling...")
+            self.updater.start_polling(
+                timeout=30,
+                read_latency=5,
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES
+            )
+            logger.info("Polling erfolgreich gestartet")
+
+            # Warte auf Beenden
+            logger.info("Bot läuft und wartet auf Nachrichten")
+            self.updater.idle()
+
+        except Exception as e:
+            logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
+            raise
+
     def _setup_handlers(self):
         """Registriert alle Command und Message Handler"""
         try:
@@ -139,28 +197,6 @@ class TelegramBot:
 
         except Exception as e:
             logger.error(f"Fehler beim Setup der Handler: {e}")
-            raise
-
-    def run(self):
-        """Startet den Bot"""
-        try:
-            logger.info("Starte Bot...")
-
-            # Prüfe ob Updater initialisiert wurde
-            if not self.updater:
-                raise ValueError("Updater wurde nicht korrekt initialisiert")
-
-            # Starte Polling mit zusätzlichen Debug-Informationen
-            logger.info("Starte Polling...")
-            self.updater.start_polling()
-            logger.info("Polling erfolgreich gestartet")
-
-            # Warte auf Beenden
-            logger.info("Bot läuft und wartet auf Nachrichten")
-            self.updater.idle()
-
-        except Exception as e:
-            logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
             raise
 
     def start(self, update: Update, context: CallbackContext):
@@ -523,7 +559,6 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Fehler beim Testsignal: {e}")
             update.message.reply_text("❌ Fehler beim Hinzufügen des Testsignals")
-
 
     def error_handler(self, update: Update, context: CallbackContext):
         """Globaler Error Handler"""
