@@ -371,6 +371,15 @@ wheels = [
 ]
 
 [[package]]
+name = "circuitbreaker"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/57/3bc8f0885c6914336d0b2fe36bf740476f0c827b3fb991993d67c1a9d3f3/circuitbreaker-2.0.0.tar.gz", hash = "sha256:28110761ca81a2accbd6b33186bc8c433e69b0933d85e89f280028dbb8c1dd14", size = 10736 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/e0/33bbe68911a05fdec50d89dcffeac7bf84050e101e2d6dd8088ac8a62cae/circuitbreaker-2.0.0-py2.py3-none-any.whl", hash = "sha256:c8c6f044b616cd5066368734ce4488020392c962b4bd2869d406d883c36d9859", size = 7644 },
+]
+
+[[package]]
 name = "click"
 version = "8.1.8"
 source = { registry = "https://pypi.org/simple" }
@@ -381,6 +390,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/b9/2e/0090cbf739cee7d23
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/d4/7ebdbd03970677812aac39c869717059dbb71a4cfc033ca6e5221787892c/click-8.1.8-py3-none-any.whl", hash = "sha256:63c132bbbed01578a06712a2d1f497bb62d9c1c0d329b7903a866228027263b2", size = 98188 },
 ]
+
+[[package]]
+name = "cloudflared"
+version = "1.0.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "setuptools-scm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c3/71/cfafdb22c8977a23f4dfda3b5b481ebade5f8c2bf067c708683b85d108fe/cloudflared-1.0.0.2.tar.gz", hash = "sha256:2dcd8ac0b6ae48e61367c86398ea1205db54fea35fdf2bc4d76650919ff93c4e", size = 2587 }
 
 [[package]]
 name = "colorama"
@@ -1106,6 +1124,23 @@ wheels = [
 ]
 
 [[package]]
+name = "oci"
+version = "2.147.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "circuitbreaker" },
+    { name = "cryptography" },
+    { name = "pyopenssl" },
+    { name = "python-dateutil" },
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f3/6b/726de820676b0f307bef9a1f3becdf7dca6b4cc131643c4724e3f775f3c0/oci-2.147.0.tar.gz", hash = "sha256:29aae3dacdb7b2c60cfefecba3487fb77249cf84285f2d6c5e48863650f6e8da", size = 14398317 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/fc/92cee399c9d147985ddd148d04ca548b653261a95f955c98b26fd4620575/oci-2.147.0-py3-none-any.whl", hash = "sha256:64d3112b7b54352bafabb578928778113579ce900147a4b49d2ccae46266e161", size = 29296524 },
+]
+
+[[package]]
 name = "openai"
 version = "1.65.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1493,6 +1528,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pyopenssl"
+version = "24.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c1/d4/1067b82c4fc674d6f6e9e8d26b3dff978da46d351ca3bac171544693e085/pyopenssl-24.3.0.tar.gz", hash = "sha256:49f7a019577d834746bc55c5fce6ecbcec0f2b4ec5ce1cf43a9a173b8138bb36", size = 178944 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/42/22/40f9162e943f86f0fc927ebc648078be87def360d9d8db346619fb97df2b/pyOpenSSL-24.3.0-py3-none-any.whl", hash = "sha256:e474f5a473cd7f92221cc04976e48f4d11502804657a08a989fb3be5514c904a", size = 56111 },
+]
+
+[[package]]
 name = "pyparsing"
 version = "3.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1677,11 +1724,13 @@ dependencies = [
     { name = "base58" },
     { name = "ccxt" },
     { name = "certifi" },
+    { name = "cloudflared" },
     { name = "flask" },
     { name = "flask-socketio" },
     { name = "matplotlib" },
     { name = "mplfinance" },
     { name = "numpy" },
+    { name = "oci" },
     { name = "openai" },
     { name = "opencv-python" },
     { name = "pandas" },
@@ -1710,11 +1759,13 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "ccxt", specifier = ">=4.4.30" },
     { name = "certifi", specifier = "==2023.7.22" },
+    { name = "cloudflared", specifier = ">=1.0.0.2" },
     { name = "flask", specifier = ">=3.1.0" },
     { name = "flask-socketio", specifier = ">=5.5.1" },
     { name = "matplotlib", specifier = ">=3.10.1" },
     { name = "mplfinance", specifier = ">=0.12.10b0" },
     { name = "numpy", specifier = ">=2.2.3" },
+    { name = "oci", specifier = ">=2.147.0" },
     { name = "openai", specifier = ">=1.65.3" },
     { name = "opencv-python", specifier = ">=4.11.0.86" },
     { name = "pandas", specifier = ">=2.2.3" },
@@ -1930,6 +1981,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d1/53/43d99d7687e8cdef5ab5f9ec5eaf2c0423c2b35133a2b7e7bc276fc32b21/setuptools-75.8.2.tar.gz", hash = "sha256:4880473a969e5f23f2a2be3646b2dfd84af9028716d398e46192f84bc36900d2", size = 1344083 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/38/7d7362e031bd6dc121e5081d8cb6aa6f6fedf2b67bf889962134c6da4705/setuptools-75.8.2-py3-none-any.whl", hash = "sha256:558e47c15f1811c1fa7adbd0096669bf76c1d3f433f58324df69f3f5ecac4e8f", size = 1229385 },
+]
+
+[[package]]
+name = "setuptools-scm"
+version = "8.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/bd/c5d16dd95900567e09744af92119da7abc5f447320d53ec1d9415ec30263/setuptools_scm-8.2.0.tar.gz", hash = "sha256:a18396a1bc0219c974d1a74612b11f9dce0d5bd8b1dc55c65f6ac7fd609e8c28", size = 77572 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/7c/5a9799042320242c383c4485a2771a37d49e8ce2312ca647653d2fd1a7a4/setuptools_scm-8.2.0-py3-none-any.whl", hash = "sha256:136e2b1d393d709d2bcf26f275b8dec06c48b811154167b0fd6bb002aad17d6d", size = 43944 },
 ]
 
 [[package]]

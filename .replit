@@ -43,6 +43,10 @@ args = "Test Signal Generator"
 task = "workflow.run"
 args = "Test Suite"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Webhook Bot"
+
 [[workflows.workflow]]
 name = "Solana Trading Bot"
 author = "agent"
@@ -154,6 +158,20 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python -m unittest test_automated_signal_generator.py test_ai_trading.py -v"
+
+[[workflows.workflow]]
+name = "Webhook Bot"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 webhook_bot.py"
 
 [deployment]
 run = ["sh", "-c", "python3 bot.py"]
