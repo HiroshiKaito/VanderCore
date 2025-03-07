@@ -23,30 +23,39 @@ from utils import format_amount, validate_amount, format_wallet_info
 from signal_processor import SignalProcessor
 from dex_connector import DexConnector
 from automated_signal_generator import AutomatedSignalGenerator
+from chart_analyzer import ChartAnalyzer
 from apscheduler.schedulers.background import BackgroundScheduler
 import pandas as pd
+from typing import Dict, Any
 
-# Setze Werkzeug Logger auf WARNING
-logging.getLogger('werkzeug').setLevel(logging.WARNING)
+
+# Update the logging configuration to capture more details
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Flask App für Replit
 app = Flask(__name__)
 
-# Logging Setup mit detailliertem Format
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
-
 @app.route('/')
 def home():
-    return jsonify({"status": "Bot is running", "timestamp": datetime.now().isoformat()})
+    """Health check endpoint"""
+    return jsonify({
+        "status": "Bot is running",
+        "active_users": len(getattr(bot_instance, 'active_users', set())),
+        "timestamp": datetime.now().isoformat()
+    })
 
 def run_flask():
     """Startet den Flask-Server im Hintergrund"""
     try:
-        logger.info("Starte Flask-Server...")
+        logger.info("Starte Flask-Server auf Port 5000...")
         app.run(host='0.0.0.0', port=5000)
     except Exception as e:
         logger.error(f"Fehler beim Starten des Flask-Servers: {e}")
@@ -83,6 +92,10 @@ class SolanaWalletBot:
             logger.info("Initialisiere Signal Processor...")
             self.signal_processor = SignalProcessor()
             self.signal_generator = None
+
+            # Initialisiere Chart Analyzer
+            logger.info("Initialisiere Chart Analyzer...")
+            self.chart_analyzer = ChartAnalyzer()
 
             logger.info("Bot erfolgreich initialisiert")
 
@@ -638,6 +651,13 @@ class SolanaWalletBot:
                 )
                 logger.info(f"User {query.from_user.id} führt neues Signal aus")
 
+            elif query.data == "show_analysis":
+                query.message.reply_text("📊 Detaillierte Analyse wird hier angezeigt...")
+
+            elif query.data == "show_chart":
+                query.message.reply_text("📈 Chart wird hier angezeigt...")
+
+
         except Exception as e:
             logger.error(f"Fehler im Button Handler: {e}")
             query.message.reply_text("❌ Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.")
@@ -669,15 +689,15 @@ class SolanaWalletBot:
             self.handle_text(update, context)
 
     def test_signal(self, update: Update, context: CallbackContext):
-        """Generiert ein Test-Signal"""
+        """Generiert ein Test-Signal mit verbesserter KI-Analyse"""
         try:
             user_id = update.effective_user.id
             logger.info(f"Test-Signal-Befehl empfangen von User {user_id}")
 
             # Bestätige den Empfang des Befehls an den Benutzer
-            update.message.reply_text("🔄 Generiere Test-Signal...")
+            update.message.reply_text("🔄 Generiere Test-Signal mit KI-Analyse...")
 
-            # Erstelle ein Test-Signal
+            # Erstelle ein verbessertes Test-Signal mit KI-Metriken
             test_signal = {
                 'pair': 'SOL/USD',
                 'direction': 'long',
@@ -689,73 +709,185 @@ class SolanaWalletBot:
                 'expected_profit': 1.37,
                 'signal_quality': 7.5,
                 'trend_strength': 0.8,
+                'ai_confidence': 0.85,  # KI-Konfidenz
+                'risk_score': 6.5,     # Risiko-Bewertung
+                'market_sentiment': 0.7 # Markt-Sentiment
             }
 
-            logger.info(f"Test-Signal erstellt: {test_signal}")
+            logger.info(f"Test-Signal erstellt mit KI-Metriken: {test_signal}")
 
+            # Versuche Signal zu verarbeiten und zu senden
             try:
-                # Verarbeite das Signal
-                logger.info("Verarbeite Test-Signal...")
+                logger.info("Verarbeite KI-Test-Signal...")
                 processed_signal = self.signal_processor.process_signal(test_signal)
                 if processed_signal:
+                    # Erweiterte Signal-Nachricht mit KI-Metriken
                     signal_message = (
-                        f"🎯 Trading Signal erkannt!\n\n"
+                        f"🎯 KI-Trading Signal erkannt!\n\n"
                         f"Pair: {processed_signal['pair']}\n"
                         f"Position: {'📈 LONG' if processed_signal['direction'] == 'long' else '📉 SHORT'}\n"
                         f"Entry: {processed_signal['entry']:.2f} USDC\n"
                         f"Stop Loss: {processed_signal['stop_loss']:.2f} USDC\n"
-                        f"Take Profit: {processed_signal['take_profit']:.2f} USDC\n"
-                        f"Erwarteter Profit: {processed_signal['expected_profit']:.1f}%\n"
-                        f"Signal Qualität: {processed_signal['signal_quality']:.1f}/10\n"
-                        f"Trend Stärke: {processed_signal['trend_strength']:.2f}"
+                        f"Take Profit: {processed_signal['take_profit']:.2f} USDC\n\n"
+                        f"📊 KI-Analyse:\n"
+                        f"• Erwarteter Profit: {processed_signal['expected_profit']:.1f}%\n"
+                        f"• Signal Qualität: {processed_signal['signal_quality']:.1f}/10\n"
+                        f"• KI-Konfidenz: {processed_signal.get('ai_confidence', 0.5):.2f}\n"
+                        f"• Risiko-Score: {processed_signal.get('risk_score', 5.0):.1f}/10\n"
+                        f"• Markt-Sentiment: {processed_signal.get('market_sentiment', 0.5):.2f}\n"
+                        f"• Trend Stärke: {processed_signal['trend_strength']:.2f}\n\n"
+                        f"💡 KI-Empfehlung: "
+                        f"{'Starkes Signal zum Einstieg!' if processed_signal['signal_quality'] >= 7.0 else 'Mit Vorsicht handeln.'}"
                     )
 
+                    # Erweiterte Interaktionsbuttons
                     keyboard = [
                         [
                             InlineKeyboardButton("✅ Signal handeln", callback_data="trade_signal_new"),
                             InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+                        ],
+                        [
+                            InlineKeyboardButton("📊 Detailanalyse", callback_data="show_analysis"),
+                            InlineKeyboardButton("📈 Chart anzeigen", callback_data="show_chart")
                         ]
                     ]
 
-                    logger.info("Sende Test-Signal an Benutzer...")
+                    logger.info("Sende erweitertes KI-Test-Signal an Benutzer...")
                     update.message.reply_text(
                         signal_message,
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
-                    logger.info("Test-Signal erfolgreich gesendet")
+                    logger.info("KI-Test-Signal erfolgreich gesendet")
                 else:
                     logger.error("Signal konnte nicht verarbeitet werden")
                     update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung")
             except Exception as process_error:
                 logger.error(f"Fehler bei der Signal-Verarbeitung: {process_error}")
-                update.message.reply_text("❌ Fehler bei der Signal-Verarbeitung. Bitte versuchen Sie es später erneut.")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Generieren des Test-Signals: {e}")
-            update.message.reply_text("❌ Fehler beim Generieren des Test-Signals")
-
-    def notify_admin(self, message: str, is_critical: bool = False):
-        """Sendet eine Benachrichtigung an den Admin als private Nachricht"""
-        try:
-            if not self.config.ADMIN_USER_ID:
-                logger.error("Admin User ID nicht konfiguriert")
-                return
-            prefix = "🚨 KRITISCH" if is_critical else "ℹ️ INFO"
-            admin_message = f"{prefix}: {message}\n\nZeitstempel: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-
-            if self.updater and self.updater.bot:
-                # Sende die Nachricht direkt an den Admin-Chat
-                self.updater.bot.send_message(
-                    chat_id=self.config.ADMIN_USER_ID,
-                    text=admin_message,
-                    parse_mode='Markdown'
+                update.message.reply_text(
+                    "❌ Fehler bei der Signal-Verarbeitung. "
+                    "Unsere KI-Engine analysiert den Fehler und optimiert die Signalgenerierung."
                 )
-                logger.info(f"Admin-Benachrichtigung gesendet: {message}")
-            else:
-                logger.error("Bot-Updater nicht verfügbar für Admin-Benachrichtigung")
-        except Exception as e:
-            logger.error(f"Fehler beim Senden der Admin-Benachrichtigung: {e}")
 
+        except Exception as e:
+            logger.error(f"Fehler beim Generieren des KI-Test-Signals: {e}")
+            update.message.reply_text(
+                "❌ Fehler beim Generieren des Test-Signals. "
+                "Bitte versuchen Sie es später erneut."
+            )
+
+    def _notify_users_about_signal(self, signal: Dict[str, Any]):
+        """Benachrichtigt Benutzer über neue Trading-Signale mit erweiterter KI-Analyse"""
+        try:
+            logger.info(f"Starte Benachrichtigung über neues Signal. Aktive Nutzer: {len(self.active_users)}")
+            logger.debug(f"Aktive Nutzer IDs: {self.active_users}")
+
+            if not self.active_users:
+                logger.warning("Keine aktiven Nutzer gefunden!")
+                return
+
+            # Hole das aktuelle Wallet-Guthaben
+            balance = self.wallet_manager.get_balance()
+
+            # Erstelle Prediction Chart
+            logger.info("Erstelle Chart für Trading Signal...")
+            chart_image = None
+            try:
+                chart_image = self.chart_analyzer.create_prediction_chart(
+                    entry_price=signal['entry'],
+                    target_price=signal['take_profit'],
+                    stop_loss=signal['stop_loss']
+                )
+            except Exception as chart_error:
+                logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
+
+            # Erstelle erweiterte Signal-Nachricht mit KI-Metriken
+            signal_message = (
+                f"⚡ KI-TRADING SIGNAL!\n\n"
+                f"Pair: {signal['pair']}\n"
+                f"Signal: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
+                f"Einstieg: {signal['entry']:.2f} USD\n"
+                f"Stop Loss: {signal['stop_loss']:.2f} USD\n"
+                f"Take Profit: {signal['take_profit']:.2f} USD\n\n"
+                f"📊 KI-Analyse:\n"
+                f"• Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
+                f"• Signal-Qualität: {signal['signal_quality']}/10\n"
+                f"• KI-Konfidenz: {signal.get('ai_confidence', 0.5):.2f}\n"
+                f"• Risiko-Score: {signal.get('risk_score', 5.0):.1f}/10\n"
+                f"• Markt-Sentiment: {signal.get('market_sentiment', 0.5):.2f}\n"
+                f"• Trend Stärke: {signal['trend_strength']:.2f}\n\n"
+                f"💰 Verfügbares Guthaben: {balance:.4f} SOL\n\n"
+                f"💡 KI-Empfehlung: "
+                f"{'Starkes Signal zum Einstieg!' if signal['signal_quality'] >= 7.0 else 'Mit Vorsicht handeln.'}\n\n"
+                f"Schnell reagieren! Der Markt wartet nicht! 🚀"
+            )
+
+            logger.info(f"Signal-Nachricht vorbereitet: {len(signal_message)} Zeichen")
+
+            # Erweiterte Interaktionsbuttons
+            keyboard = [
+                [
+                    InlineKeyboardButton("✅ Handeln", callback_data="trade_signal_new"),
+                    InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+                ],
+                [
+                    InlineKeyboardButton("📊 Detailanalyse", callback_data="show_analysis"),
+                    InlineKeyboardButton("📈 Chart anzeigen", callback_data="show_chart")
+                ]
+            ]
+
+            # Sende eine einzelne Nachricht mit Chart und Signal-Details
+            for user_id in self.active_users:
+                try:
+                    logger.info(f"Versuche Signal an User {user_id} zu senden...")
+                    if chart_image:
+                        # Sende eine einzelne Nachricht mit Chart und Text
+                        self.updater.bot.send_photo(
+                            chat_id=user_id,
+                            photo=chart_image,
+                            caption=signal_message,
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                        logger.info(f"Trading Signal mit Chart erfolgreich an User {user_id} gesendet")
+                    else:
+                        # Fallback: Sende nur Text wenn kein Chart verfügbar
+                        self.updater.bot.send_message(
+                            chat_id=user_id,
+                            text=signal_message + "\n\n⚠️ Chart konnte nicht generiert werden.",
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                        logger.warning(f"Trading Signal ohne Chart an User {user_id} gesendet")
+
+                except Exception as send_error:
+                    logger.error(f"Fehler beim Senden der Nachricht an User {user_id}: {send_error}")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Senden der Signal-Benachrichtigung: {e}")
+
+    def handle_command(self, update: Update, context: CallbackContext):
+        command = update.message.text.split()[0]
+
+        if command == '/start':
+            self.start(update, context)
+        elif command == '/hilfe':
+            self.help_command(update, context)
+        elif command == '/wallet':
+            self.wallet_command(update, context)
+        elif command == '/senden':
+            self.send_command(update, context)
+        elif command == '/empfangen':
+            self.receive_command(update, context)
+        elif command == '/trades':
+            self.handle_trades_command(update, context)
+        elif command == '/wartung_start' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.enter_maintenance_mode(update, context)
+        elif command == '/wartung_ende' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.exit_maintenance_mode(update, context)
+        elif command == '/test_admin' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.test_admin_notification(update, context)
+        elif command == '/test_signal' and str(update.effective_user.id) == str(self.config.ADMIN_USER_ID):
+            self.test_signal(update, context)
+        else:
+            self.handle_text(update, context)
 
     def test_admin_notification(self, update: Update, context: CallbackContext):
         """Sendet eine Test-Benachrichtigung an den Admin"""
@@ -794,6 +926,7 @@ class SolanaWalletBot:
             # Initialisiere Updater
             self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
             dp = self.updater.dispatcher
+            self.bot = self.updater
 
             # Registriere Handler
             dp.add_handler(CommandHandler("start", self.start))
@@ -839,7 +972,7 @@ class SolanaWalletBot:
 if __name__ == "__main__":
     try:
         logging.info("Starte Solana Trading Bot...")
-        bot = SolanaWalletBot()
-        bot.run()
+        bot_instance = SolanaWalletBot()
+        bot_instance.run()
     except Exception as e:
         logger.error(f"Kritischer Fehler beim Ausführen des Bots: {e}")

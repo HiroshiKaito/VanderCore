@@ -193,7 +193,7 @@ class AutomatedSignalGenerator:
         """Erstellt ein Trading-Signal basierend auf technischer Analyse"""
         try:
             trend = trend_analysis.get('trend', 'neutral')
-            strength = trend_analysis.get('stärke', 0)
+            strength = float(trend_analysis.get('stärke', 0))
             metrics = trend_analysis.get('metriken', {})
 
             # Reduzierte Mindest-Trendstärke
@@ -202,8 +202,8 @@ class AutomatedSignalGenerator:
                 return None
 
             # Support/Resistance Levels
-            support = support_resistance.get('support', 0)
-            resistance = support_resistance.get('resistance', 0)
+            support = float(support_resistance.get('support', 0))
+            resistance = float(support_resistance.get('resistance', 0))
 
             # Zusätzliche Level-Analyse
             support_levels = support_resistance.get('levels', {}).get('support_levels', [])
@@ -222,7 +222,7 @@ class AutomatedSignalGenerator:
             dynamic_tp_percent = base_tp_percent * tp_multiplier
 
             # Berücksichtige Volumen-Trend
-            volume_trend = metrics.get('volumen_trend', 0)
+            volume_trend = float(metrics.get('volumen_trend', 0))
             if abs(volume_trend) > 0.1:  # Signifikante Volumenänderung
                 dynamic_tp_percent *= (1 + min(abs(volume_trend), 0.5))
 
@@ -278,8 +278,8 @@ class AutomatedSignalGenerator:
             return None
 
     def _calculate_signal_quality(self, trend_analysis: Dict[str, Any],
-                              strength: float,
-                              expected_profit: float) -> float:
+                                  strength: float,
+                                  expected_profit: float) -> float:
         """Berechnet die Qualität eines Signals (0-10) basierend auf technischer Analyse"""
         try:
             # Grundlegende Trend-Bewertung

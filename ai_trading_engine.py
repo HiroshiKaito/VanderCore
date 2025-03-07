@@ -1,8 +1,8 @@
 """AI Trading Engine mit ML-basierter Signalgenerierung und Marktanalyse"""
 import logging
-import numpy as np
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
 import ta
@@ -25,15 +25,110 @@ class AITradingEngine:
         self.sentiment_analyzer = SentimentAnalyzer()
         self.risk_analyzer = RiskAnalyzer()
 
-        # API Endpoints
-        self.coingecko_api = "https://api.coingecko.com/api/v3"
-        self.dex_screener_api = "https://api.dexscreener.com/latest"
-        self.solana_rpc = "https://api.mainnet-beta.solana.com"
-
-        # Token Addresses
-        self.sol_token_address = "So11111111111111111111111111111111111111112"
-
         logger.info("KI-Trading-Engine initialisiert mit scikit-learn")
+
+    async def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
+        """Sagt die nächste Kursbewegung vorher"""
+        try:
+            if self.model is None:
+                self._init_model()
+
+            # Hole Sentiment-Daten
+            try:
+                sentiment_data = await self.sentiment_analyzer.analyze_market_sentiment()
+                current_data['sentiment_score'] = sentiment_data.get('overall_score', 0.5)
+                logger.info(f"Sentiment Score: {current_data['sentiment_score']:.2f}")
+            except Exception as e:
+                logger.error(f"Fehler bei der Sentiment-Analyse: {e}")
+                current_data['sentiment_score'] = 0.5  # Fallback zu neutral
+                sentiment_data = {'overall_score': 0.5}
+
+            # Feature-Extraktion
+            try:
+                X = self.prepare_features(current_data)
+                if len(X) == 0:
+                    logger.warning("Keine Features extrahiert, verwende technische Analyse")
+                    return self._predict_with_technical_analysis(current_data)
+            except Exception as e:
+                logger.error(f"Fehler bei der Feature-Extraktion: {e}")
+                return self._predict_with_technical_analysis(current_data)
+
+            # Vorhersage
+            try:
+                prediction = self.model.predict(X[-1:])
+                current_price = float(current_data['close'].iloc[-1])
+                predicted_price = float(prediction[0])
+
+                price_change = (predicted_price - current_price) / current_price * 100
+                volatility = float(current_data['close'].rolling(window=20).std().iloc[-1])
+                volume_trend = float(current_data['volume'].pct_change().rolling(window=5).mean().iloc[-1])
+
+                logger.info(f"Vorhersage: Preis {predicted_price:.2f}, "
+                        f"Änderung {price_change:.2f}%, "
+                        f"Volatilität {volatility:.2f}")
+            except Exception as e:
+                logger.error(f"Fehler bei der Preisvorhersage: {e}")
+                return self._predict_with_technical_analysis(current_data)
+
+            # Risikomanagement
+            try:
+                volume_24h = float(current_data['volume'].iloc[-24:].sum())
+                position_size, position_recommendation = self.risk_analyzer.calculate_position_size(
+                    account_balance=10000,  # Beispielwert
+                    current_price=current_price,
+                    volume_24h=volume_24h
+                )
+
+                stoploss, takeprofit = self.risk_analyzer.calculate_stoploss(
+                    entry_price=current_price,
+                    direction='long' if price_change > 0 else 'short'
+                )
+
+                logger.info(f"Risikomanagement: Position {position_size:.2f}, "
+                        f"Stoploss {stoploss:.2f}, "
+                        f"Takeprofit {takeprofit:.2f}")
+            except Exception as e:
+                logger.error(f"Fehler beim Risikomanagement: {e}")
+                position_size = 0
+                position_recommendation = "Fehler bei der Positionsgrößenberechnung"
+                stoploss = current_price * 0.95
+                takeprofit = current_price * 1.05
+
+            # Konfidenzberechnung
+            confidence = self._calculate_confidence(
+                price_change=price_change,
+                volatility=volatility,
+                volume_trend=volume_trend,
+                current_price=current_price,
+                sentiment_score=sentiment_data['overall_score']
+            )
+
+            prediction_data = {
+                'prediction': predicted_price,
+                'confidence': confidence,
+                'price_change': price_change,
+                'signal': 'long' if price_change > 0 else 'short',
+                'volatility': volatility,
+                'volume_trend': volume_trend,
+                'sentiment': sentiment_data,
+                'risk_management': {
+                    'position_size': position_size,
+                    'position_recommendation': position_recommendation,
+                    'stoploss': stoploss,
+                    'takeprofit': takeprofit
+                },
+                'timestamp': pd.Timestamp.now().timestamp()
+            }
+
+            logger.info(f"Prediction generiert: Preis {predicted_price:.2f}, "
+                    f"Änderung {price_change:.2f}%, "
+                    f"Konfidenz {confidence:.2f}")
+
+            return prediction_data
+
+        except Exception as e:
+            logger.error(f"Kritischer Fehler bei der Vorhersage: {e}")
+            return self._predict_with_technical_analysis(current_data)
 
     def _init_model(self):
         """Initialisiert das ML-Modell"""
@@ -117,77 +212,6 @@ class AITradingEngine:
             logger.error(f"Fehler bei der Feature-Vorbereitung: {e}")
             return np.array([])
 
-    async def predict_next_move(self, current_data: pd.DataFrame) -> Dict[str, Any]:
-        """Sagt die nächste Kursbewegung vorher"""
-        try:
-            if self.model is None:
-                self._init_model()
-
-            # Hole Sentiment-Daten
-            sentiment_data = await self.sentiment_analyzer.analyze_market_sentiment()
-            current_data['sentiment_score'] = sentiment_data['overall_score']
-
-            X = self.prepare_features(current_data)
-            if len(X) == 0:
-                return {'prediction': None, 'confidence': 0, 'signal': 'neutral'}
-
-            # Verwende die letzten Datenpunkte für die Vorhersage
-            prediction = self.model.predict(X[-1:])
-            current_price = current_data['close'].iloc[-1]
-            predicted_price = prediction[0]
-
-            price_change = (predicted_price - current_price) / current_price * 100
-            volatility = current_data['close'].rolling(window=20).std().iloc[-1]
-            volume_trend = current_data['volume'].pct_change().rolling(window=5).mean().iloc[-1]
-
-            # Berechne Stoploss und Positionsgröße
-            volume_24h = float(current_data['volume'].iloc[-24:].sum())
-            position_size, position_recommendation = self.risk_analyzer.calculate_position_size(
-                account_balance=10000,  # Beispielwert, sollte aus Wallet kommen
-                current_price=current_price,
-                volume_24h=volume_24h
-            )
-
-            stoploss, takeprofit = self.risk_analyzer.calculate_stoploss(
-                entry_price=current_price,
-                direction='long' if price_change > 0 else 'short'
-            )
-
-            # Berücksichtige Sentiment in der Konfidenzberechnung
-            confidence = self._calculate_confidence(
-                price_change=price_change,
-                volatility=volatility,
-                volume_trend=volume_trend,
-                current_price=current_price,
-                sentiment_score=sentiment_data['overall_score']
-            )
-
-            prediction_data = {
-                'prediction': predicted_price,
-                'confidence': confidence,
-                'price_change': price_change,
-                'signal': 'long' if price_change > 0 else 'short',
-                'volatility': volatility,
-                'volume_trend': volume_trend,
-                'sentiment': sentiment_data,
-                'risk_management': {
-                    'position_size': position_size,
-                    'position_recommendation': position_recommendation,
-                    'stoploss': stoploss,
-                    'takeprofit': takeprofit
-                },
-                'timestamp': pd.Timestamp.now().timestamp()
-            }
-
-            logger.info(f"Prediction generated: Price {predicted_price:.2f}, "
-                    f"Change {price_change:.2f}%, Confidence {confidence:.2f}")
-
-            return prediction_data
-
-        except Exception as e:
-            logger.error(f"Fehler bei der Vorhersage: {e}")
-            return self._predict_with_technical_analysis(current_data)
-
     def _calculate_confidence(self, price_change: float, volatility: float,
                           volume_trend: float, current_price: float,
                           sentiment_score: float) -> float:
@@ -220,13 +244,22 @@ class AITradingEngine:
                         f"\n - Preis-Konfidenz: {price_confidence:.2f}"
                         f"\n - Volumen-Konfidenz: {volume_confidence:.2f}"
                         f"\n - Volatilitäts-Konfidenz: {volatility_confidence:.2f}"
-                        f"\n - Sentiment-Einfluss: {sentiment_impact:.2f}")
+                        f"\n - Sentiment-Einfluss: {sentiment_impact:.2f}"
+                        f"\n - Gesamt-Konfidenz: {confidence:.2f}")
 
             # Normalisiere auf [0, 1]
-            return max(0.0, min(1.0, confidence))
+            confidence = max(0.0, min(1.0, confidence))
+            logger.info(f"Finale Konfidenz nach Normalisierung: {confidence:.2f}")
+            return confidence
 
         except Exception as e:
-            logger.error(f"Fehler bei der Konfidenzberechnung: {e}")
+            logger.error(f"Fehler bei der Konfidenzberechnung: {str(e)}")
+            logger.debug(f"Eingabewerte bei Fehler:"
+                        f"\n - Price Change: {price_change}"
+                        f"\n - Volatility: {volatility}"
+                        f"\n - Volume Trend: {volume_trend}"
+                        f"\n - Current Price: {current_price}"
+                        f"\n - Sentiment Score: {sentiment_score}")
             return 0.0
 
     def train_model(self, training_data: pd.DataFrame):
