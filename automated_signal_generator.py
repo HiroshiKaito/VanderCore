@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class AutomatedSignalGenerator:
     def __init__(self, dex_connector: DexConnector, signal_processor: SignalProcessor, bot):
+        """Initialisiere den Signal Generator"""
         self.dex_connector = dex_connector
         self.signal_processor = signal_processor
         self.chart_analyzer = ChartAnalyzer()
@@ -86,11 +87,11 @@ class AutomatedSignalGenerator:
                 if not self.chart_analyzer:
                     raise ValueError("Chart Analyzer nicht initialisiert")
 
-                # Starte Job
+                # Starte Job mit höherer Frequenz (alle 30 Sekunden)
                 self.scheduler.add_job(
                     self.generate_signals,
                     'interval',
-                    seconds=5,  # Überprüfung alle 5 Sekunden
+                    seconds=30,  # Überprüfung alle 30 Sekunden für häufigere Signale
                     id='signal_generator',
                     replace_existing=True
                 )
@@ -102,7 +103,7 @@ class AutomatedSignalGenerator:
                 current_price = market_info.get('price', 0) if market_info else 0
                 logger.info(f"Signal-Generator gestartet - "
                           f"Status: Aktiv, "
-                          f"Intervall: 5s, "
+                          f"Intervall: 30s, "
                           f"Aktueller SOL Preis: {current_price:.2f} USDC")
             else:
                 logger.info("Signal-Generator läuft bereits")
@@ -364,32 +365,35 @@ class AutomatedSignalGenerator:
             except Exception as chart_error:
                 logger.error(f"Fehler bei der Chart-Generierung: {chart_error}")
 
-            # Erstelle Signal-Nachricht
-            signal_message = (
-                f"🎯 Trading Signal erkannt!\n\n"
-                f"Pair: {signal['pair']}\n"
-                f"Position: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
-                f"Entry: {signal['entry']:.2f} USDC\n"
-                f"Stop Loss: {signal['stop_loss']:.2f} USDC\n"
-                f"Take Profit: {signal['take_profit']:.2f} USDC\n\n"
-                f"📊 Analyse:\n"
-                f"• Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
-                f"• Signal Qualität: {signal['signal_quality']}/10\n"
-                f"• Trend Stärke: {signal['trend_strength']:.2f}\n\n"
-                f"💡 Empfehlung: "
-                f"{'Starkes Signal zum Einstieg!' if signal['signal_quality'] >= 7.0 else 'Mit Vorsicht handeln.'}"
-            )
-
-            keyboard = [
-                [
-                    InlineKeyboardButton("✅ Handeln", callback_data="trade_signal_new"),
-                    InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
-                ]
-            ]
-
             # Sende Signal an alle aktiven Nutzer
             for user_id in self.bot.active_users:
                 try:
+                    # Formatiere die Zeit in der Zeitzone des Benutzers
+                    local_time = self.bot.format_timestamp(signal['timestamp'], user_id)
+
+                    # Erstelle Signal-Nachricht
+                    signal_message = (
+                        f"🎯 Trading Signal erkannt! ({local_time})\n\n"
+                        f"Pair: {signal['pair']}\n"
+                        f"Position: {'📈 LONG' if signal['direction'] == 'long' else '📉 SHORT'}\n"
+                        f"Entry: {signal['entry']:.2f} USDC\n"
+                        f"Stop Loss: {signal['stop_loss']:.2f} USDC\n"
+                        f"Take Profit: {signal['take_profit']:.2f} USDC\n\n"
+                        f"📊 Analyse:\n"
+                        f"• Erwarteter Profit: {signal['expected_profit']:.1f}%\n"
+                        f"• Signal Qualität: {signal['signal_quality']}/10\n"
+                        f"• Trend Stärke: {signal['trend_strength']:.2f}\n\n"
+                        f"💡 Empfehlung: "
+                        f"{'Starkes Signal zum Einstieg!' if signal['signal_quality'] >= 7.0 else 'Mit Vorsicht handeln.'}"
+                    )
+
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ Handeln", callback_data="trade_signal_new"),
+                            InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_signal")
+                        ]
+                    ]
+
                     if chart_image:
                         # Sende Nachricht mit Chart
                         self.bot.updater.bot.send_photo(
