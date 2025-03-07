@@ -17,8 +17,12 @@ import telegram
 
 # Update the logging configuration to capture more details
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
+    level=logging.DEBUG,  # Temporär auf DEBUG gesetzt für mehr Details
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -28,8 +32,14 @@ class TelegramBot:
         try:
             logger.info("Starte Bot-Initialisierung...")
 
-            # Konfiguration laden
+            # Konfiguration laden und überprüfen
             self.config = config
+            logger.debug(f"Admin User ID konfiguriert: {self.config.ADMIN_USER_ID}")
+            logger.debug("Telegram Token vorhanden: " + ("Ja" if self.config.TELEGRAM_TOKEN else "Nein"))
+            logger.debug(f"Token Länge: {len(self.config.TELEGRAM_TOKEN) if self.config.TELEGRAM_TOKEN else 0}")
+
+            if not self.config.TELEGRAM_TOKEN:
+                raise ValueError("Telegram Token nicht gefunden!")
 
             # Basis-Attribute
             self.maintenance_mode = False
@@ -40,9 +50,25 @@ class TelegramBot:
 
             # Initialisiere Telegram Updater zuerst
             logger.info("Initialisiere Telegram Updater...")
-            self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
-            if not self.updater:
-                raise ValueError("Updater konnte nicht initialisiert werden")
+            try:
+                self.updater = Updater(token=self.config.TELEGRAM_TOKEN, use_context=True)
+                if not self.updater:
+                    raise ValueError("Updater konnte nicht initialisiert werden")
+                logger.info("Telegram Updater erfolgreich initialisiert")
+
+                # Teste Bot-Verbindung
+                me = self.updater.bot.get_me()
+                logger.info(f"Bot-Verbindung erfolgreich. Bot-Name: {me.first_name}, Bot-ID: {me.id}")
+
+            except telegram.error.InvalidToken as token_error:
+                logger.error(f"Ungültiger Telegram Token: {token_error}")
+                raise ValueError("Der Telegram Token ist ungültig. Bitte überprüfen Sie den Token.")
+            except telegram.error.NetworkError as network_error:
+                logger.error(f"Netzwerkfehler bei Telegram-Verbindung: {network_error}")
+                raise ValueError("Konnte keine Verbindung zu Telegram herstellen. Bitte überprüfen Sie Ihre Internetverbindung.")
+            except Exception as updater_error:
+                logger.error(f"Unerwarteter Fehler bei Telegram Updater Initialisierung: {updater_error}")
+                raise
 
             # Komponenten
             logger.info("Initialisiere Wallet Manager...")
@@ -81,7 +107,7 @@ class TelegramBot:
             logger.info("Bot erfolgreich initialisiert")
 
         except Exception as e:
-            logger.error(f"Fehler bei Bot-Initialisierung: {e}")
+            logger.error(f"Kritischer Fehler bei Bot-Initialisierung: {e}")
             raise
 
     def _setup_handlers(self):
@@ -119,10 +145,22 @@ class TelegramBot:
         """Startet den Bot"""
         try:
             logger.info("Starte Bot...")
+
+            # Prüfe ob Updater initialisiert wurde
+            if not self.updater:
+                raise ValueError("Updater wurde nicht korrekt initialisiert")
+
+            # Starte Polling mit zusätzlichen Debug-Informationen
+            logger.info("Starte Polling...")
             self.updater.start_polling()
+            logger.info("Polling erfolgreich gestartet")
+
+            # Warte auf Beenden
+            logger.info("Bot läuft und wartet auf Nachrichten")
             self.updater.idle()
+
         except Exception as e:
-            logger.error(f"Fehler beim Starten des Bots: {e}")
+            logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
             raise
 
     def start(self, update: Update, context: CallbackContext):
@@ -502,9 +540,10 @@ class TelegramBot:
 
 if __name__ == "__main__":
     try:
-        logging.info("Starte Solana Trading Bot...")
+        logger.info("=== Starte Solana Trading Bot ===")
         bot = TelegramBot()
+        logger.info("Bot-Instanz erfolgreich erstellt")
         bot.run()
     except Exception as e:
-        logging.error(f"Kritischer Fehler beim Starten des Bots: {e}")
+        logger.error(f"=== Kritischer Fehler beim Starten des Bots: {e} ===")
         raise
