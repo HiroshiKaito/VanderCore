@@ -1,3 +1,6 @@
+"""
+Telegram Bot mit Webhook-Integration für Solana Trading
+"""
 import logging
 import os
 import json
@@ -46,10 +49,7 @@ def setup_bot():
     """Initialisiert den Bot und registriert Handler"""
     global bot, dispatcher, wallet_manager
     try:
-        if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "your_bot_token_here":
-            logger.error("Kein gültiger TELEGRAM_TOKEN gefunden. Bitte setzen Sie den Token in den Deployment-Secrets.")
-            return False
-
+        # Initialisiere Bot
         bot = Bot(token=config.TELEGRAM_TOKEN)
         dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
         wallet_manager = WalletManager(config.SOLANA_RPC_URL)
@@ -90,7 +90,7 @@ def register_handlers():
 def start(update: Update, context: CallbackContext):
     """Handler für den /start Befehl"""
     try:
-        user_id = str(update.effective_user.id)
+        user_id = update.effective_user.id
         logger.info(f"Start-Befehl von User {user_id}")
 
         update.message.reply_text(
@@ -128,22 +128,22 @@ def wallet_command(update: Update, context: CallbackContext):
             )
             return
 
-        if user_id in user_private_keys:
+        if wallet_manager and user_id in user_private_keys:
             wallet_manager.load_wallet(user_private_keys[user_id])
 
-        balance = wallet_manager.get_balance()
-        address = wallet_manager.get_address()
+            balance = wallet_manager.get_balance()
+            address = wallet_manager.get_address()
 
-        update.message.reply_text(
-            "💎 Dein Wallet-Status\n\n"
-            f"💰 Guthaben: {balance:.4f} SOL\n"
-            f"📍 Adresse: `{address}`\n\n"
-            "Was möchtest du tun?",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📥 SOL erhalten", callback_data="show_qr")]
-            ])
-        )
+            update.message.reply_text(
+                "💎 Dein Wallet-Status\n\n"
+                f"💰 Guthaben: {balance:.4f} SOL\n"
+                f"📍 Adresse: `{address}`\n\n"
+                "Was möchtest du tun?",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📥 SOL erhalten", callback_data="show_qr")]
+                ])
+            )
 
     except Exception as e:
         logger.error(f"Fehler beim Wallet-Command: {e}")
@@ -480,7 +480,7 @@ def main():
         )
 
     except Exception as e:
-        logger.critical(f"Fataler Fehler: {e}")
+        logger.error(f"Fataler Fehler: {e}")
         cleanup()
         raise
 

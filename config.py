@@ -26,7 +26,7 @@ class Config:
             if not self.TELEGRAM_TOKEN:
                 logger.error("TELEGRAM_TOKEN nicht gefunden in Umgebungsvariablen")
                 logger.debug(f"Verfügbare Umgebungsvariablen: {', '.join(list(os.environ.keys()))}")
-            
+
             admin_id = os.environ.get('ADMIN_USER_ID', '0')
             logger.debug(f"Geladene ADMIN_USER_ID: {admin_id}")
 
@@ -36,13 +36,6 @@ class Config:
             except ValueError:
                 logger.error(f"Ungültige ADMIN_USER_ID: {admin_id}")
                 raise ValueError("ADMIN_USER_ID muss eine gültige Zahl sein")
-                
-            # Load session secret
-            self.SESSION_SECRET = os.environ.get('SESSION_SECRET')
-            if not self.SESSION_SECRET:
-                logger.warning("SESSION_SECRET nicht gefunden, generiere zufälligen Wert")
-                import secrets
-                self.SESSION_SECRET = secrets.token_hex(16)
 
             # Load Solana configuration
             self.SOLANA_NETWORK = os.environ.get('SOLANA_NETWORK', self.SOLANA_NETWORK)
@@ -59,10 +52,10 @@ class Config:
         """Validate the configuration values"""
         if not self.TELEGRAM_TOKEN:
             logger.warning("TELEGRAM_TOKEN nicht gesetzt - wird zur Laufzeit benötigt")
-            
+
         if not self.ADMIN_USER_ID:
             logger.warning("ADMIN_USER_ID nicht gesetzt - wird zur Laufzeit benötigt")
-            
+
         if not isinstance(self.ADMIN_USER_ID, int):
             raise ValueError("ADMIN_USER_ID muss eine Zahl sein")
 

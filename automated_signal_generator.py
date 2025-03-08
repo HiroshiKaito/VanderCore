@@ -213,51 +213,43 @@ class AutomatedSignalGenerator:
             strength = float(trend_analysis.get('stärke', 0))
             metrics = trend_analysis.get('metriken', {})
 
-            # Reduzierte Mindest-Trendstärke für mehr Signale
-            if trend == 'neutral' or strength < 0.01:  # Reduziert von 0.03 auf 0.01
-                logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength}%")
+            # Erhöhte Mindest-Trendstärke für bessere Signalqualität
+            if trend == 'neutral' or strength < 0.03:  # Erhöht von 0.01 auf 0.03
+                logger.info(f"Kein Signal - Trend zu schwach: {trend}, Stärke: {strength:.3f}")
                 return None
 
             # Support/Resistance Levels
             support = float(support_resistance.get('support', 0))
             resistance = float(support_resistance.get('resistance', 0))
 
-            # Zusätzliche Level-Analyse
-            support_levels = support_resistance.get('levels', {}).get('support_levels', [])
-            resistance_levels = support_resistance.get('levels', {}).get('resistance_levels', [])
+            # Dynamische Take-Profit-Berechnung mit angepassten Schwellen
+            base_tp_percent = 0.01  # Erhöht von 0.005 auf 0.01 (1%)
 
-            # Dynamische Take-Profit-Berechnung mit reduzierten Schwellen
-            base_tp_percent = 0.005  # Reduziert von 0.01 auf 0.005 (0.5%)
-
-            # Erhöhe Take-Profit bei starkem Trend und klaren Level-Abständen
-            level_multiplier = 1.0
-            if len(support_levels) > 0 and len(resistance_levels) > 0:
-                level_range = (resistance - support) / current_price
-                level_multiplier = min(2.0, 1.0 + level_range * 10)
-
-            tp_multiplier = min(3.0, 1.0 + (strength / 100 * 5) * level_multiplier)
+            # Erhöhe Take-Profit bei starkem Trend
+            tp_multiplier = min(3.0, 1.0 + (strength * 2))
             dynamic_tp_percent = base_tp_percent * tp_multiplier
 
-            # Berücksichtige Volumen-Trend mit höherer Sensitivität
+            # Berücksichtige Volumen-Trend
             volume_trend = float(metrics.get('volumen_trend', 0))
-            if abs(volume_trend) > 0.05:  # Reduziert von 0.1 auf 0.05
+            if abs(volume_trend) > 0.1:  # Erhöht von 0.05 auf 0.1
                 dynamic_tp_percent *= (1 + min(abs(volume_trend), 0.5))
 
             if trend == 'aufwärts':
                 entry = current_price
-                stop_loss = max(support, current_price * 0.998)  # Reduziert auf 0.2%
+                stop_loss = max(support, current_price * 0.995)  # 0.5% Stop Loss
                 take_profit = min(resistance, current_price * (1 + dynamic_tp_percent))
                 direction = 'long'
             else:  # abwärts
                 entry = current_price
-                stop_loss = min(resistance, current_price * 1.002)  # Reduziert auf 0.2%
+                stop_loss = min(resistance, current_price * 1.005)  # 0.5% Stop Loss
                 take_profit = max(support, current_price * (1 - dynamic_tp_percent))
                 direction = 'short'
 
             # Berechne erwarteten Profit
             expected_profit = abs((take_profit - entry) / entry * 100)
 
-            if expected_profit < 0.1:  # Reduziert von 0.2% auf 0.1%
+            # Erhöhte Mindest-Profitschwelle
+            if expected_profit < 0.5:  # Erhöht von 0.1% auf 0.5%
                 logger.info(f"Kein Signal - Zu geringer erwarteter Profit: {expected_profit:.1f}%")
                 return None
 
@@ -265,7 +257,7 @@ class AutomatedSignalGenerator:
                 trend_analysis, strength, expected_profit
             )
 
-            if signal_quality < 2:  # Reduziert von 3 auf 2 für mehr Signale
+            if signal_quality < 4:  # Erhöht von 2 auf 4 für höhere Qualitätsanforderung
                 logger.info(f"Kein Signal - Qualität zu niedrig: {signal_quality}/10")
                 return None
 

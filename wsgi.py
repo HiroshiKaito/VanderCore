@@ -1,7 +1,7 @@
-
 import logging
-import os
 from flask import Flask, jsonify
+from config import config
+from webhook_bot import app, setup_bot, get_bot_info
 
 # Configure logging
 logging.basicConfig(
@@ -13,9 +13,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Import the Flask app from webhook_bot.py
-from webhook_bot import app, setup_bot, get_bot_info
 
 # Initialize bot
 if not setup_bot():

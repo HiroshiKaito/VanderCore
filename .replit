@@ -59,7 +59,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 bot.py"
+args = "python bot.py"
 
 [[workflows.workflow]]
 name = "Test AI Engine"

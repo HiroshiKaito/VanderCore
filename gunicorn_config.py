@@ -1,4 +1,3 @@
-
 # Gunicorn Konfiguration für optimale Leistung und Stabilität
 import multiprocessing
 
@@ -11,16 +10,16 @@ forwarded_allow_ips = '*'
 secure_scheme_headers = {'X-Forwarded-Proto': 'https'}
 
 # Worker Prozesse
-workers = 4  # Feste Anzahl von 4 Workern
+workers = multiprocessing.cpu_count()
 worker_class = "sync"
 worker_connections = 1000
-timeout = 120  # Erhöhtes Timeout für lange Verbindungen
-keepalive = 65  # Längerer Keepalive für stabilere Verbindungen
+timeout = 120
+keepalive = 65
 
 # Logging
 accesslog = "access.log"
 errorlog = "error.log"
-loglevel = "info"  # Normales Log-Level für Produktion
+loglevel = "info"
 capture_output = True
 enable_stdio_inheritance = True
 
