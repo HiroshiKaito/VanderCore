@@ -32,6 +32,7 @@ dispatcher = None
 active_users = set()
 wallet_manager = None
 user_wallets = {}
+user_private_keys = {}  # Neues Dictionary für private keys
 signal_thread = None
 signal_generator_running = False
 
@@ -123,24 +124,30 @@ def health_check():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 def save_user_wallets():
-    """Speichert die User-Wallet-Zuordnung"""
+    """Speichert die User-Wallet-Zuordnung und private keys"""
     try:
+        data = {
+            'wallets': user_wallets,
+            'private_keys': user_private_keys
+        }
         with open('user_wallets.json', 'w') as f:
-            json.dump(user_wallets, f)
-        logger.info("User-Wallet-Zuordnung gespeichert")
+            json.dump(data, f)
+        logger.info("User-Wallet-Daten gespeichert")
     except Exception as e:
-        logger.error(f"Fehler beim Speichern der User-Wallet-Zuordnung: {e}")
+        logger.error(f"Fehler beim Speichern der User-Wallet-Daten: {e}")
 
 def load_user_wallets():
-    """Lädt die User-Wallet-Zuordnung"""
-    global user_wallets
+    """Lädt die User-Wallet-Zuordnung und private keys"""
+    global user_wallets, user_private_keys
     try:
         if os.path.exists('user_wallets.json'):
             with open('user_wallets.json', 'r') as f:
-                user_wallets = json.load(f)
-            logger.info("User-Wallet-Zuordnung geladen")
+                data = json.load(f)
+                user_wallets = data.get('wallets', {})
+                user_private_keys = data.get('private_keys', {})
+            logger.info("User-Wallet-Daten geladen")
     except Exception as e:
-        logger.error(f"Fehler beim Laden der User-Wallet-Zuordnung: {e}")
+        logger.error(f"Fehler beim Laden der User-Wallet-Daten: {e}")
 
 def calculate_potential_profit(entry_price, take_profit, amount):
     """Berechnet den potenziellen Gewinn"""
@@ -306,7 +313,6 @@ def start(update: Update, context: CallbackContext):
         update.message.reply_text("⚠️ Fehler aufgetreten. Versuche es erneut mit /start")
 
 def button_handler(update: Update, context: CallbackContext):
-    """Handler für Button-Callbacks"""
     query = update.callback_query
     user_id = str(query.from_user.id)
 
@@ -365,8 +371,9 @@ def button_handler(update: Update, context: CallbackContext):
                 public_key, private_key = wallet_manager.create_wallet()
 
                 if public_key and private_key:
-                    # Speichere Wallet-Adresse für User
+                    # Speichere Wallet-Informationen
                     user_wallets[user_id] = public_key
+                    user_private_keys[user_id] = private_key
                     save_user_wallets()
 
                     # Sende alle Wallet-Informationen in einer Nachricht
@@ -437,6 +444,10 @@ def button_handler(update: Update, context: CallbackContext):
 
         elif query.data == "show_qr":
             try:
+                # Stelle sicher, dass die Wallet geladen ist
+                if user_id in user_private_keys:
+                    wallet_manager.load_wallet(user_private_keys[user_id])
+
                 # Generiere QR-Code
                 qr_buffer = wallet_manager.generate_qr_code()
                 query.message.reply_photo(
