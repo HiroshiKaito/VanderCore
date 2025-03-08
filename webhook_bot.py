@@ -17,7 +17,7 @@ from telegram.error import TelegramError, NetworkError, TimedOut
 from config import config
 from wallet_manager import WalletManager
 
-# Logger-Konfiguration
+# Logger-Konfiguration mit Rotation
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -44,9 +44,10 @@ class WebhookManager:
         self.last_check = 0
         self.error_count = 0
         self.max_retries = 3
-        self.check_interval = 60
+        self.check_interval = 300  # 5 Minuten
         self.webhook_url = None
         self.base_url = None
+        self.health_status = True
 
     def check_port_open(self, host, port):
         """Überprüft ob ein Port erreichbar ist"""
@@ -61,14 +62,14 @@ class WebhookManager:
     def check_connectivity(self):
         """Überprüft die Netzwerkverbindung"""
         try:
-            # Prüfe ob Port 5000 erreichbar ist
             if not self.check_port_open('0.0.0.0', 5000):
                 logger.error("Port 5000 ist nicht erreichbar")
                 return False
 
-            # Prüfe Telegram API Verbindung
             if not bot:
                 return False
+
+            # Prüfe Telegram API Verbindung
             bot.get_me()
             return True
         except Exception as e:
@@ -78,12 +79,11 @@ class WebhookManager:
     def get_replit_domain(self):
         """Ermittelt die aktuelle Replit-Domain"""
         try:
-            # Versuche verschiedene Umgebungsvariablen
-            repl_id = os.environ.get('REPL_ID')
-            repl_slug = os.environ.get('REPL_SLUG')
             repl_owner = os.environ.get('REPL_OWNER')
+            repl_slug = os.environ.get('REPL_SLUG')
+            repl_id = os.environ.get('REPL_ID')
 
-            # Prüfe verfügbare Domänen
+            # Prüfe verschiedene Domain-Varianten
             domains = [
                 f"{repl_slug}.{repl_owner}.repl.co",
                 f"{repl_id}.id.repl.co",
@@ -114,13 +114,11 @@ class WebhookManager:
                 logger.error("Keine Verbindung möglich")
                 return False
 
-            # Hole aktuelle Domain
             base_url = self.get_replit_domain()
             if not base_url:
                 logger.error("Keine gültige Domain gefunden")
                 return False
 
-            # Setze Webhook
             webhook_url = f"{base_url}/{config.TELEGRAM_TOKEN}"
             logger.info(f"Setze Webhook-URL: {webhook_url}")
 
@@ -128,7 +126,7 @@ class WebhookManager:
             bot.delete_webhook()
             time.sleep(1)
 
-            # Setze neuen Webhook
+            # Setze neuen Webhook mit optimierten Einstellungen
             bot.set_webhook(
                 url=webhook_url,
                 allowed_updates=Update.ALL_TYPES,
@@ -142,6 +140,7 @@ class WebhookManager:
                 self.webhook_url = webhook_url
                 self.active = True
                 self.error_count = 0
+                self.health_status = True
                 logger.info("Webhook erfolgreich eingerichtet")
                 return True
 
@@ -159,6 +158,7 @@ class WebhookManager:
 
         while True:
             try:
+                # Prüfe Konnektivität und Webhook-Status
                 if not self.active or not self.check_connectivity():
                     delay = retry_delays[min(current_retry, len(retry_delays) - 1)]
                     logger.info(f"Webhook inaktiv, versuche Neustart in {delay} Sekunden")
@@ -178,13 +178,16 @@ class WebhookManager:
                     not self.check_connectivity()):
                     logger.warning("Webhook-Problem erkannt")
                     self.active = False
+                    self.health_status = False
                     current_retry = 0
                     continue
 
+                self.health_status = True
                 time.sleep(self.check_interval)
 
             except Exception as e:
                 logger.error(f"Fehler bei Webhook-Überwachung: {e}")
+                self.health_status = False
                 time.sleep(60)
 
 webhook_manager = WebhookManager()
@@ -248,7 +251,7 @@ def health_check():
     """Health Check Endpoint"""
     try:
         status = {
-            'status': 'healthy' if webhook_manager.active else 'degraded',
+            'status': 'healthy' if webhook_manager.health_status else 'degraded',
             'bot_info': bot.username if bot else None,
             'webhook_url': webhook_manager.webhook_url,
             'error_count': webhook_manager.error_count,
@@ -456,7 +459,7 @@ def register_handlers():
         raise
 
 def main():
-    """Hauptfunktion mit verbesserter Fehlerbehandlung"""
+    """Hauptfunktion"""
     try:
         # Initialisiere Bot
         if not initialize_bot():
@@ -475,6 +478,7 @@ def main():
 
         # Starte Flask Server
         logger.info("Starte Flask Server auf Port 5000...")
+        # Der Server wird von Gunicorn verwaltet
         app.run(
             host='0.0.0.0',
             port=5000,

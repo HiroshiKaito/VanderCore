@@ -171,7 +171,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 webhook_bot.py"
+args = "gunicorn -c gunicorn_config.py wsgi:app"
 waitForPort = 5000
 
 [deployment]
