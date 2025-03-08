@@ -144,24 +144,35 @@ class WalletManager:
     def generate_qr_code(self) -> BytesIO:
         """Generiert einen QR-Code für die Wallet-Adresse"""
         try:
+            # Prüfe ob eine Wallet existiert
             address = self.get_address()
             if not address:
+                logger.error("Keine Wallet-Adresse verfügbar für QR-Code-Generierung")
                 raise ValueError("Keine Wallet-Adresse verfügbar")
 
+            # Erstelle QR Code
             qr = qrcode.QRCode(
                 version=1,
                 error_correction=qrcode.constants.ERROR_CORRECT_L,
                 box_size=10,
                 border=4,
             )
-            qr.add_data(address)
+
+            # Füge Daten hinzu (Solana-Adresse)
+            qr.add_data(f"solana:{address}")
             qr.make(fit=True)
 
+            # Erstelle Bild
             img = qr.make_image(fill_color="black", back_color="white")
+
+            # Speichere in BytesIO
             bio = BytesIO()
             img.save(bio, format='PNG')
             bio.seek(0)
+
+            logger.info(f"QR-Code erfolgreich generiert für Adresse: {address[:8]}...")
             return bio
+
         except Exception as e:
             logger.error(f"Fehler bei QR-Code-Generierung: {e}")
             raise
