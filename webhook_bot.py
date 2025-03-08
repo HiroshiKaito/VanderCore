@@ -11,6 +11,7 @@ import sys
 import requests
 import threading
 from time import sleep
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Logging-Konfiguration
 logging.basicConfig(
@@ -48,12 +49,26 @@ def start(update: Update, context: CallbackContext):
         logger.info(f"Start-Befehl von User {user_id}")
 
         update.message.reply_text(
-            "👋 Willkommen beim Trading Bot!\n"
-            "Ich bin bereit für deine Befehle."
+            "👋 Hey! Ich bin Dexter - der beste Solana Trading Bot auf dem Markt!\n\n"
+            "Ich werde dir beim Trading helfen und:\n"
+            "✅ Trading Signale mit KI-Analyse generieren\n"
+            "✅ Risk Management überwachen\n"
+            "✅ Dein Portfolio tracken\n"
+            "✅ Marktanalysen durchführen\n\n"
+            "Verfügbare Befehle:\n"
+            "/wallet - Wallet-Verwaltung\n"
+            "/trades - Aktive Trades anzeigen\n"
+            "/hilfe - Weitere Hilfe anzeigen\n\n"
+            "Ready to trade? 🚀",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Let's go! 🚀", callback_data="start_signal_search")]
+            ])
         )
+        logger.info(f"Start-Nachricht erfolgreich an User {user_id} gesendet")
+
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
-        update.message.reply_text("❌ Es ist ein Fehler aufgetreten")
+        update.message.reply_text("❌ Es ist ein Fehler aufgetreten. Bitte versuche es später erneut.")
 
 @app.route('/health')
 def health_check():
