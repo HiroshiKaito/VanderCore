@@ -206,7 +206,8 @@ def start(update: Update, context: CallbackContext):
         if user_id in user_wallets:
             update.message.reply_text(
                 "🌑 Vander hier. Willkommen zurück.\n\n"
-                f"Deine Wallet ist aktiviert:\n`{user_wallets[user_id]}`\n\n"
+                f"Deine Wallet ist aktiviert:\n"
+                f"`{user_wallets[user_id]}`\n\n"
                 "Die Märkte bewegen sich.\n"
                 "Zeit für Action.\n\n"
                 "Verfügbare Befehle:\n"
@@ -220,7 +221,9 @@ def start(update: Update, context: CallbackContext):
             return
 
         update.message.reply_text(
-            "🌑 Vander hier. Ich operiere in den Tiefen der Blockchain.\n\n"
+            "🌑 Vander hier.\n\n"
+            "Ich operiere in den Tiefen der Blockchain.\n"
+            "Meine Spezialität: profitable Trading-Opportunitäten aufspüren.\n\n"
             "Was ich beherrsche:\n"
             "• KI-gesteuerte Marktanalyse in Echtzeit\n"
             "• Präzise Signale mit 85% Erfolgsquote\n"
@@ -240,7 +243,12 @@ def start(update: Update, context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
-        update.message.reply_text("⚠️ Fehler. Versuche es erneut mit /start")
+        update.message.reply_text(
+            "⚠️ Fehler aufgetreten. Versuche es erneut mit /start\n\n"
+            "Verfügbare Befehle:\n"
+            "/wallet - Wallet-Status anzeigen\n"
+            "/stop_signals - Signalsuche beenden"
+        )
 
 def message_handler(update: Update, context: CallbackContext):
     """Genereller Message Handler"""
