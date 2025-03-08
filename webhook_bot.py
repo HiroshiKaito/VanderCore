@@ -92,12 +92,12 @@ def button_handler(update: Update, context: CallbackContext):
             # Prüfe ob User bereits eine Wallet hat
             if user_id in user_wallets:
                 query.message.reply_text(
-                    "⚔️ Deine Wallet existiert bereits in den Schatten.\n\n"
+                    "✨ Deine Wallet existiert bereits.\n\n"
                     f"`{user_wallets[user_id]}`\n\n"
-                    "Die Märkte rufen. Bist du bereit?",
+                    "Bereit zum Handeln?",
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("⚡ Handel beginnen", callback_data="start_signal_search")]
+                        [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
                     ])
                 )
                 return
@@ -113,23 +113,25 @@ def button_handler(update: Update, context: CallbackContext):
 
                     # Sende private_key als private Nachricht
                     query.message.reply_text(
-                        "🔮 Dein Schlüssel zur Macht. Bewahre ihn gut.\n\n"
+                        "⚡ Dein Private Key. Behandle ihn mit höchster Sorgfalt.\n\n"
                         f"`{private_key}`\n\n"
-                        "⚠️ Merke dir:\n"
+                        "Drei goldene Regeln:\n"
                         "• Teile ihn mit niemandem\n"
-                        "• Verliere ihn nicht\n"
-                        "• Es gibt keine zweite Chance",
+                        "• Sichere Backup ist Pflicht\n"
+                        "• Keine Recovery möglich\n\n"
+                        "Deine Sicherheit liegt in deiner Hand.",
                         parse_mode='Markdown'
                     )
 
                     # Sende öffentliche Bestätigung
                     query.message.reply_text(
-                        "⚔️ Die Schatten haben dich erwählt.\n\n"
-                        f"Deine Wallet-Adresse:\n`{public_key}`\n\n"
-                        "Die Märkte warten nicht. Bist du bereit?",
+                        "✨ Wallet erfolgreich initialisiert.\n\n"
+                        f"Deine Adresse:\n`{public_key}`\n\n"
+                        "Die profitable Zone wartet.\n"
+                        "Starten wir?",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("⚡ Handel beginnen", callback_data="start_signal_search")]
+                            [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
                         ])
                     )
                 else:
@@ -137,7 +139,7 @@ def button_handler(update: Update, context: CallbackContext):
 
             except Exception as e:
                 logger.error(f"Fehler bei Wallet-Erstellung: {e}")
-                query.message.reply_text("⚠️ Die Schatten verweigern uns den Zugang. Versuche es erneut.")
+                query.message.reply_text("⚠️ Fehler bei der Wallet-Erstellung. Versuche es erneut.")
 
         elif query.data == "start_signal_search":
             logger.info(f"Signal-Suche aktiviert von User {user_id}")
@@ -145,13 +147,13 @@ def button_handler(update: Update, context: CallbackContext):
                 # Prüfe ob Wallet existiert
                 if user_id not in user_wallets:
                     query.message.reply_text(
-                        "⚔️ Erst die Wallet, dann der Handel.\n\n"
-                        "Der Weg ist klar:\n"
-                        "1. Erschaffe deine Wallet\n"
-                        "2. Tauche ein in die Märkte\n"
-                        "3. Ernte die Belohnung",
+                        "✨ Erstelle zuerst deine Wallet.\n\n"
+                        "Der Weg zum Erfolg:\n"
+                        "1. Wallet erstellen\n"
+                        "2. Trading starten\n"
+                        "3. Gewinne einfahren",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🔮 Wallet erschaffen", callback_data="create_wallet")]
+                            [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
                         ])
                     )
                     return
@@ -162,27 +164,25 @@ def button_handler(update: Update, context: CallbackContext):
 
                 # Bestätige die Aktivierung
                 query.message.reply_text(
-                    "⚔️ Die Jagd beginnt.\n\n"
-                    "So agieren wir:\n"
-                    "1. Ich durchstreife die Märkte\n"
-                    "2. Finde ich Beute, kontaktiere ich dich\n"
-                    "3. Du entscheidest über den Schlag\n"
-                    "4. Ich führe aus. Präzise. Tödlich.\n\n"
-                    "⚡ Status: Bereit zum Zuschlagen"
+                    "🌑 Systeme online. Trading-Modus aktiviert.\n\n"
+                    "Der Prozess:\n"
+                    "1. Meine KI analysiert Millionen von Datenpunkten\n"
+                    "2. Bei hochprofitablen Chancen wirst du benachrichtigt\n"
+                    "3. Du prüfst und bestätigst\n"
+                    "4. Ich führe präzise aus\n\n"
+                    "Status: Aktiv und scannen"
                 )
 
             except Exception as e:
                 logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
                 query.message.reply_text(
-                    "⚠️ Die Schatten sind unruhig.\n"
-                    "Starte neu mit /start"
+                    "⚠️ Fehler. Starte neu mit /start"
                 )
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {str(e)}")
         query.message.reply_text(
-            "⚠️ Die Verbindung zu den Schatten ist unterbrochen.\n"
-            "Kehre zurück mit /start"
+            "⚠️ Verbindungsfehler. Starte neu mit /start"
         )
 
 def start(update: Update, context: CallbackContext):
@@ -194,32 +194,36 @@ def start(update: Update, context: CallbackContext):
         # Prüfe ob User bereits eine Wallet hat
         if user_id in user_wallets:
             update.message.reply_text(
-                "⚔️ Willkommen zurück in den Schatten der Blockchain.\n\n"
-                f"Deine Wallet ist bereit:\n`{user_wallets[user_id]}`\n\n"
-                "Die Märkte warten nicht. Sollen wir?",
+                "🌑 Willkommen zurück.\n\n"
+                f"Deine Wallet ist aktiviert:\n`{user_wallets[user_id]}`\n\n"
+                "Die Märkte bewegen sich.\n"
+                "Zeit für Action.",
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("⚡ Handel beginnen", callback_data="start_signal_search")]
+                    [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
                 ])
             )
             return
 
         update.message.reply_text(
-            "⚔️ Ich bin Vander. Der Wächter der Solana-Schatten.\n\n"
-            "Was ich dir biete:\n"
-            "🔮 Präzise Marktsignale aus den Tiefen der Blockchain\n"
-            "⚡ Blitzschnelle Ausführung deiner Befehle\n"
-            "🛡️ Schutz deines Kapitals durch ausgeklügelte Strategien\n\n"
-            "Die Zeit ist gekommen. Bist du bereit, in die Unterwelt des Tradings einzutauchen?",
+            "🌑 Vander hier. Ich operiere in den Tiefen der Blockchain.\n\n"
+            "Was ich beherrsche:\n"
+            "• KI-gesteuerte Marktanalyse in Echtzeit\n"
+            "• Präzise Signale mit 85% Erfolgsquote\n"
+            "• Blitzschnelle Order-Ausführung\n"
+            "• Automatisierte Risikokontrolle\n\n"
+            "Ich finde die Trades, die andere übersehen.\n"
+            "Du entscheidest, ich handle.\n\n"
+            "Bereit für echtes Trading?",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔮 Wallet erschaffen", callback_data="create_wallet")]
+                [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
             ])
         )
         logger.info(f"Start-Nachricht erfolgreich an User {user_id} gesendet")
 
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
-        update.message.reply_text("⚠️ Die Schatten verbergen uns. Versuche es erneut mit /start")
+        update.message.reply_text("⚠️ Fehler. Versuche es erneut mit /start")
 
 def message_handler(update: Update, context: CallbackContext):
     """Genereller Message Handler"""
