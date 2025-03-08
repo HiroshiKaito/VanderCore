@@ -49,7 +49,7 @@ def setup_bot():
         if not config.TELEGRAM_TOKEN or config.TELEGRAM_TOKEN == "your_bot_token_here":
             logger.error("Kein gültiger TELEGRAM_TOKEN gefunden. Bitte setzen Sie den Token in den Deployment-Secrets.")
             return False
-            
+
         bot = Bot(token=config.TELEGRAM_TOKEN)
         dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
         wallet_manager = WalletManager(config.SOLANA_RPC_URL)
@@ -480,7 +480,7 @@ def main():
         )
 
     except Exception as e:
-        logger.error(f"Fataler Fehler: {e}")
+        logger.critical(f"Fataler Fehler: {e}")
         cleanup()
         raise
 
