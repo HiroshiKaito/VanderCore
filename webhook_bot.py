@@ -74,20 +74,24 @@ def button_handler(update: Update, context: CallbackContext):
                 if public_key and private_key:
                     # Sende private_key als private Nachricht
                     query.message.reply_text(
-                        "🔐 Hier ist dein Private Key. Bewahre ihn sicher auf!\n\n"
+                        "🔐 Hier ist dein geheimer Schlüssel - dein Zugang zur Welt des Tradings!\n\n"
                         f"`{private_key}`\n\n"
-                        "⚠️ Teile diesen Key NIEMALS mit anderen!",
+                        "🚨 WICHTIG: Bewahre diesen Schlüssel absolut sicher auf!\n"
+                        "🔒 Teile ihn NIE mit anderen\n"
+                        "📝 Speichere ihn an einem sicheren Ort\n"
+                        "⚠️ Bei Verlust gibt es KEINE Wiederherstellung",
                         parse_mode='Markdown'
                     )
 
                     # Sende öffentliche Bestätigung
                     query.message.reply_text(
-                        "✅ Wallet erfolgreich erstellt!\n\n"
-                        f"Deine Wallet-Adresse: `{public_key}`\n\n"
-                        "Möchtest du jetzt mit dem Trading beginnen?",
+                        "🎉 Perfekt! Deine Wallet wurde erfolgreich erstellt!\n\n"
+                        f"🔑 Deine Wallet-Adresse:\n`{public_key}`\n\n"
+                        "🚀 Bereit für dein Trading-Abenteuer?\n"
+                        "Drücke den Button und lass uns durchstarten! 💪",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("Let's trade! 🚀", callback_data="start_signal_search")]
+                            [InlineKeyboardButton("🎯 Trading starten!", callback_data="start_signal_search")]
                         ])
                     )
                 else:
@@ -95,16 +99,7 @@ def button_handler(update: Update, context: CallbackContext):
 
             except Exception as e:
                 logger.error(f"Fehler bei Wallet-Erstellung: {e}")
-                query.message.reply_text("❌ Fehler bei der Wallet-Erstellung")
-
-        elif query.data == "load_wallet":
-            logger.info(f"Wallet-Import angefordert von User {user_id}")
-            query.message.reply_text(
-                "🔑 Bitte sende mir deinen Private Key, um deine Wallet zu laden.\n\n"
-                "⚠️ Sende den Key nur in einem privaten Chat!"
-            )
-            # Setze den nächsten Handler für den Private Key
-            context.user_data['expecting_private_key'] = True
+                query.message.reply_text("❌ Ups! Bei der Wallet-Erstellung ist etwas schiefgelaufen. Bitte versuche es erneut!")
 
         elif query.data == "start_signal_search":
             logger.info(f"Signal-Suche aktiviert von User {user_id}")
@@ -112,10 +107,10 @@ def button_handler(update: Update, context: CallbackContext):
                 # Prüfe ob Wallet existiert
                 if not wallet_manager.get_address():
                     query.message.reply_text(
-                        "❌ Bitte erstelle oder lade zuerst eine Wallet!",
+                        "⚠️ Moment mal! Du brauchst erst eine Wallet, bevor es losgehen kann!\n\n"
+                        "Keine Sorge, das ist schnell erledigt:",
                         reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("Neue Wallet erstellen", callback_data="create_wallet")],
-                            [InlineKeyboardButton("Existierende Wallet laden", callback_data="load_wallet")]
+                            [InlineKeyboardButton("💎 Neue Wallet erstellen", callback_data="create_wallet")]
                         ])
                     )
                     return
@@ -126,24 +121,29 @@ def button_handler(update: Update, context: CallbackContext):
 
                 # Bestätige die Aktivierung
                 query.message.reply_text(
-                    "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
-                    "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n\n"
-                    "Status: 🟢 Signal Generator aktiv"
+                    "🌟 Fantastisch! Dein Trading-Abenteuer beginnt!\n\n"
+                    "🤖 Ich scanne jetzt aktiv den Markt nach den besten Trading-Gelegenheiten für dich.\n\n"
+                    "📊 Meine KI-Analyse berücksichtigt:\n"
+                    "📈 Technische Indikatoren\n"
+                    "🌍 Marktstimmung\n"
+                    "💡 Trendanalysen\n"
+                    "🎯 Risikobewertung\n\n"
+                    "🔔 Du erhältst sofort eine Benachrichtigung, wenn ich ein vielversprechendes Signal entdecke!\n\n"
+                    "Status: 🟢 Aktiv und bereit"
                 )
 
             except Exception as e:
                 logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
                 query.message.reply_text(
-                    "❌ Fehler beim Aktivieren der Signal-Suche.\n"
-                    "Bitte versuchen Sie es später erneut."
+                    "❌ Hoppla! Beim Aktivieren der Signal-Suche gab es einen kleinen Stolperstein.\n"
+                    "🔄 Bitte versuche es einfach noch einmal!"
                 )
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {str(e)}")
         query.message.reply_text(
-            "❌ Es ist ein Fehler aufgetreten.\n"
-            f"Details: {str(e)}\n"
-            "Bitte versuchen Sie es erneut."
+            "❌ Ups! Da ist etwas schiefgelaufen.\n"
+            "🔄 Bitte versuche es erneut!"
         )
 
 def start(update: Update, context: CallbackContext):
@@ -153,52 +153,29 @@ def start(update: Update, context: CallbackContext):
         logger.info(f"Start-Befehl von User {user_id}")
 
         update.message.reply_text(
-            "👋 Hey! Ich bin Dexter - der beste Solana Trading Bot auf dem Markt!\n\n"
-            "Bevor wir loslegen können, brauchst du eine Wallet. "
-            "Was möchtest du tun?",
+            "🚀 Hey! Willkommen bei Dexter - deinem persönlichen Trading-Assistenten!\n\n"
+            "🤖 Ich bin dein KI-gesteuerter Begleiter in der spannenden Welt des Solana-Tradings.\n\n"
+            "Was ich für dich tun kann:\n"
+            "✨ KI-gestützte Trading-Signale generieren\n"
+            "📊 Marktanalysen in Echtzeit durchführen\n"
+            "⚡ Blitzschnelle Order-Ausführung\n"
+            "🛡️ Professionelles Risikomanagement\n\n"
+            "🎯 Bereit für den ersten Schritt?\n"
+            "Lass uns deine Trading-Wallet erstellen!",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Neue Wallet erstellen", callback_data="create_wallet")],
-                [InlineKeyboardButton("Existierende Wallet laden", callback_data="load_wallet")]
+                [InlineKeyboardButton("💎 Trading-Wallet erstellen", callback_data="create_wallet")]
             ])
         )
         logger.info(f"Start-Nachricht erfolgreich an User {user_id} gesendet")
 
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
-        update.message.reply_text("❌ Es ist ein Fehler aufgetreten. Bitte versuche es später erneut.")
-
-def handle_private_key(update: Update, context: CallbackContext):
-    """Handler für eingehende Private Keys"""
-    try:
-        # Lösche die Nachricht sofort für Sicherheit
-        update.message.delete()
-
-        if wallet_manager.load_wallet(update.message.text):
-            update.message.reply_text(
-                "✅ Wallet erfolgreich geladen!\n\n"
-                "Möchtest du jetzt mit dem Trading beginnen?",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Let's trade! 🚀", callback_data="start_signal_search")]
-                ])
-            )
-        else:
-            update.message.reply_text("❌ Ungültiger Private Key")
-
-    except Exception as e:
-        logger.error(f"Fehler beim Laden der Wallet: {e}")
-        update.message.reply_text("❌ Fehler beim Laden der Wallet")
-    finally:
-        # Zurücksetzen des Erwartungsstatus
-        if 'expecting_private_key' in context.user_data:
-            del context.user_data['expecting_private_key']
+        update.message.reply_text("❌ Ups! Etwas ist schiefgelaufen. Bitte versuche es noch einmal!")
 
 def message_handler(update: Update, context: CallbackContext):
     """Genereller Message Handler"""
-    if context.user_data.get('expecting_private_key'):
-        handle_private_key(update, context)
-    else:
-        # Handle andere Nachrichten hier
-        pass
+    # Handle andere Nachrichten hier
+    pass
 
 @app.route('/')
 def index():
