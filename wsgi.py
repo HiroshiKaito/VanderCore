@@ -3,6 +3,7 @@ import logging
 from flask import Flask
 from bot import TelegramBot
 import os
+import webhook_bot  # Ensure the webhook module is correctly loaded
 
 # Configure logging
 logging.basicConfig(

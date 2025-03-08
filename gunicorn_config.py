@@ -5,6 +5,10 @@ import multiprocessing
 bind = "0.0.0.0:5000"
 backlog = 2048
 
+# Ensure application is properly accessible
+forwarded_allow_ips = '*'
+secure_scheme_headers = {'X-Forwarded-Proto': 'https'}
+
 # Worker Prozesse
 workers = multiprocessing.cpu_count() * 2 + 1  # Optimale Worker-Anzahl
 worker_class = "sync"
