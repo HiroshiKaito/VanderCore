@@ -312,6 +312,16 @@ def start(update: Update, context: CallbackContext):
         logger.error(f"Fehler beim Start-Command: {e}")
         update.message.reply_text("⚠️ Fehler aufgetreten. Versuche es erneut mit /start")
 
+def send_interactive_message(update: Update, message: str, buttons: list = None):
+    """Sendet eine interaktive Nachricht mit optionalen Buttons"""
+    if buttons:
+        markup = InlineKeyboardMarkup(buttons)
+        update.message.reply_text(message, reply_markup=markup)
+    else:
+        update.message.reply_text(message)
+
+
+
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = str(query.from_user.id)
@@ -329,9 +339,14 @@ def button_handler(update: Update, context: CallbackContext):
                 qr_buffer = wallet_manager.generate_qr_code()
                 query.message.reply_photo(
                     photo=qr_buffer,
-                    caption="🎯 Scanne den Code zum Einzahlen!\n\n"
-                           "Sobald dein Guthaben eingeht, gebe ich dir sofort Bescheid! 🚀\n"
-                           "Dann können wir direkt mit dem Trading loslegen!"
+                    caption=(
+                        "🎯 Perfekt! Hier ist dein persönlicher QR-Code zum Einzahlen!\n\n"
+                        "Scanne ihn einfach mit deiner Wallet-App oder\n"
+                        "leite ihn an den Sender weiter. 📱\n\n"
+                        "Keine Sorge, ich behalte dein Guthaben im Auge und\n"
+                        "gebe dir sofort Bescheid, wenn die SOL da sind! 🚀\n\n"
+                        "Dann können wir direkt mit dem Trading loslegen! 💫"
+                    )
                 )
 
                 # Starte Guthaben-Check im Hintergrund
@@ -344,15 +359,19 @@ def button_handler(update: Update, context: CallbackContext):
 
             except Exception as e:
                 logger.error(f"Fehler bei QR-Code Generierung: {e}")
-                query.message.reply_text("❌ Konnte QR-Code nicht erstellen. Versuche es später erneut!")
+                query.message.reply_text(
+                    "❌ Ups! Der QR-Code konnte nicht erstellt werden.\n"
+                    "Versuche es mit der Wallet-Adresse! 📋"
+                )
 
         elif query.data == "show_address":
             address = wallet_manager.get_address()
             query.message.reply_text(
-                "📋 Hier ist deine Wallet-Adresse:\n\n"
+                "📋 Hier ist deine Wallet-Adresse zum Einzahlen:\n\n"
                 f"`{address}`\n\n"
-                "Kopiere sie und lass uns den Tank füllen! 💫\n\n"
-                "Ich gebe dir sofort Bescheid, sobald das Guthaben da ist! 🚀",
+                "Kopiere sie einfach und leite sie weiter! 💫\n\n"
+                "Sobald das Guthaben eingeht, gebe ich dir sofort\n"
+                "Bescheid und wir können direkt loslegen! 🚀",
                 parse_mode='Markdown'
             )
 
@@ -365,19 +384,67 @@ def button_handler(update: Update, context: CallbackContext):
             )
 
         elif query.data == "send_sol":
+            current_balance = wallet_manager.get_balance()
+            if current_balance <= 0:
+                query.message.reply_text(
+                    "⚠️ Hey Champion! Dein Guthaben reicht leider nicht aus.\n\n"
+                    "Lass uns erst dein Konto aufladen, damit du\n"
+                    "SOL senden kannst! 💫\n\n"
+                    "Wie möchtest du SOL erhalten?",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📱 QR-Code anzeigen", callback_data="show_qr")],
+                        [InlineKeyboardButton("📋 Adresse kopieren", callback_data="show_address")]
+                    ])
+                )
+                return
+
             query.message.reply_text(
-                "💫 SOL senden - wie möchtest du die Empfänger-Adresse eingeben?",
+                "💫 Alles klar! Wie möchtest du die Empfänger-Adresse eingeben?",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("📱 QR-Code scannen", callback_data="scan_qr")],
                     [InlineKeyboardButton("⌨️ Adresse eingeben", callback_data="enter_address")]
                 ])
             )
 
+        elif query.data == "scan_qr":
+            try:
+                scanned_address = wallet_manager.scan_qr_code()
+                if scanned_address:
+                    context.user_data['send_to_address'] = scanned_address
+                    query.message.reply_text(
+                        "🎯 QR-Code erfolgreich gescannt!\n\n"
+                        f"Empfänger-Adresse:\n`{scanned_address}`\n\n"
+                        "Wie viel SOL möchtest du senden? 💫\n"
+                        "Gib einfach den Betrag ein (z.B. 0.5):",
+                        parse_mode='Markdown',
+                        reply_markup=ForceReply()
+                    )
+                else:
+                    query.message.reply_text(
+                        "❌ Hmm, ich konnte keinen QR-Code erkennen.\n"
+                        "Versuche es noch einmal oder gib die Adresse\n"
+                        "manuell ein! 🔄",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("🔄 Erneut scannen", callback_data="scan_qr")],
+                            [InlineKeyboardButton("⌨️ Adresse eingeben", callback_data="enter_address")]
+                        ])
+                    )
+            except Exception as e:
+                logger.error(f"Fehler beim QR-Code Scan: {e}")
+                query.message.reply_text(
+                    "❌ Tut mir leid, beim Scannen ist ein Fehler aufgetreten.\n"
+                    "Versuche es mit der manuellen Eingabe! ⌨️",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("⌨️ Adresse eingeben", callback_data="enter_address")]
+                    ])
+                )
+
         elif query.data == "start_trading":
             query.message.reply_text(
-                "🎯 Yeah! Lass uns durchstarten!\n\n"
-                "Ich aktiviere jetzt die Trading-Signale für dich.\n"
-                "Sobald ich profitable Gelegenheiten entdecke,\n"
+                "🎯 Yeah! Jetzt geht's richtig los!\n\n"
+                "Ich aktiviere die Trading-Signale für dich und\n"
+                "halte Ausschau nach den besten Gelegenheiten! 🦅\n\n"
+                "Sobald ich profitable Chancen entdecke,\n"
                 "informiere ich dich sofort! 🚀\n\n"
                 "Verfügbare Befehle:\n"
                 "/wallet - Wallet-Status anzeigen\n"
@@ -423,15 +490,14 @@ def button_handler(update: Update, context: CallbackContext):
 
             # Prüfe ob User bereits eine Wallet hat
             if user_id in user_wallets:
-                query.message.reply_text(
+                send_interactive_message(
+                    update,
                     "✨ Du hast bereits eine aktive Wallet.\n\n"
                     f"Wallet-Adresse:\n{user_wallets[user_id]}\n\n"
                     "Verfügbare Befehle:\n"
                     "/wallet - Wallet-Status anzeigen\n"
                     "/stop_signals - Signalsuche beenden",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
-                    ])
+                    [[InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]]
                 )
                 return
 
@@ -446,7 +512,8 @@ def button_handler(update: Update, context: CallbackContext):
                     save_user_wallets()
 
                     # Sende alle Wallet-Informationen in einer Nachricht
-                    query.message.reply_text(
+                    send_interactive_message(
+                        update,
                         "🌟 Wallet erfolgreich erstellt!\n\n"
                         "🔐 Private Key (streng geheim):\n"
                         f"{private_key}\n\n"
@@ -460,9 +527,7 @@ def button_handler(update: Update, context: CallbackContext):
                         "Verfügbare Befehle:\n"
                         "/wallet - Wallet-Status anzeigen\n"
                         "/stop_signals - Signalsuche beenden",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
-                        ])
+                        [[InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]]
                     )
                 else:
                     raise Exception("Wallet-Erstellung fehlgeschlagen")
@@ -520,30 +585,19 @@ def button_handler(update: Update, context: CallbackContext):
                 ])
             )
 
-        elif query.data == "scan_qr":
-            try:
-                scanned_address = wallet_manager.scan_qr_code()
-                if scanned_address:
-                    context.user_data['send_to_address'] = scanned_address
-                    query.message.reply_text(
-                        f"🎯 QR-Code erfolgreich gescannt!\n\n"
-                        f"Empfänger-Adresse:\n`{scanned_address}`\n\n"
-                        f"Wie viel SOL möchtest du senden?",
-                        parse_mode='Markdown',
-                        reply_markup=ForceReply()
-                    )
-                else:
-                    query.message.reply_text("❌ Konnte keinen QR-Code erkennen. Versuche es erneut!")
-            except Exception as e:
-                logger.error(f"Fehler beim QR-Code Scan: {e}")
-                query.message.reply_text("❌ Fehler beim Scannen. Versuche es später erneut!")
+        elif query.data == "enter_address":
+            query.message.reply_text(
+                "Bitte gib die Adresse ein:",
+                reply_markup=ForceReply()
+            )
 
         elif query.data == "start_signal_search":
             logger.info(f"Signal-Suche aktiviert von User {user_id}")
             try:
                 # Prüfe ob Wallet existiert
                 if user_id not in user_wallets:
-                    query.message.reply_text(
+                    send_interactive_message(
+                        update,
                         "✨ Erstelle zuerst deine Wallet.\n\n"
                         "Der Weg zum Erfolg:\n"
                         "1. Wallet erstellen\n"
@@ -552,9 +606,7 @@ def button_handler(update: Update, context: CallbackContext):
                         "Verfügbare Befehle:\n"
                         "/wallet - Wallet-Status anzeigen\n"
                         "/stop_signals - Signalsuche beenden",
-                        reply_markup=InlineKeyboardMarkup([
-                            [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
-                        ])
+                        [[InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]]
                     )
                     return
 
@@ -566,7 +618,8 @@ def button_handler(update: Update, context: CallbackContext):
                     start_signal_generator()
 
                 # Bestätige die Aktivierung
-                query.message.reply_text(
+                send_interactive_message(
+                    update,
                     "🌑 Systeme online. Trading-Modus aktiviert.\n\n"
                     "Der Prozess:\n"
                     "1. Meine KI analysiert Millionen von Datenpunkten\n"
@@ -585,7 +638,10 @@ def button_handler(update: Update, context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {str(e)}")
-        query.message.reply_text("⚠️ Verbindungsfehler. Starte neu mit /start")
+        query.message.reply_text(
+            "❌ Ups! Da ist etwas schiefgelaufen.\n"
+            "Versuche es noch einmal mit /start! 🔄"
+        )
 
 def message_handler(update: Update, context: CallbackContext):
     """Handler für normale Textnachrichten"""
@@ -647,30 +703,42 @@ def wallet_command(update: Update, context: CallbackContext):
         user_id = str(update.effective_user.id)
 
         if user_id not in user_wallets:
-            update.message.reply_text(
-                "⚠️ Du hast noch keine Wallet!\n\n"
-                "Erstelle zuerst eine mit dem /start Befehl."
+            send_interactive_message(
+                update,
+                "⚠️ Hey Champion! Du brauchst erst eine Wallet!\n\n"
+                "Lass uns das schnell ändern, damit du\n"
+                "keine Gelegenheit verpasst! 🎯",
+                [[InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]]
             )
             return
+
+        # Stelle sicher, dass die Wallet geladen ist
+        if user_id in user_private_keys:
+            wallet_manager.load_wallet(user_private_keys[user_id])
 
         balance = wallet_manager.get_balance()
         address = wallet_manager.get_address()
 
-        update.message.reply_text(
-            "💎 Wallet Status\n\n"
+        send_interactive_message(
+            update,
+            "💎 Dein Wallet-Status\n\n"
             f"💰 Guthaben: {balance:.4f} SOL\n"
             f"📍 Adresse: `{address}`\n\n"
-            "Was möchtest du tun?",
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([
+            "Was möchtest du als Nächstes tun? 🤔",
+            [
                 [InlineKeyboardButton("📥 SOL erhalten", callback_data="show_qr"),
-                 InlineKeyboardButton("📤 SOL senden", callback_data="send_sol")]
-            ])
+                 InlineKeyboardButton("📤 SOL senden", callback_data="send_sol")],
+                [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
+            ]
         )
 
     except Exception as e:
         logger.error(f"Fehler beim Wallet-Command: {e}")
-        update.message.reply_text("❌ Fehler beim Abrufen des Wallet-Status. Versuche es später erneut!")
+        send_interactive_message(
+            update,
+            "❌ Ups! Da ist etwas schiefgelaufen.\n"
+            "Versuche es später noch einmal! 🔄"
+        )
 
 # Cleanup beim Beenden
 def cleanup():
@@ -700,12 +768,16 @@ def check_balance_callback(context: CallbackContext):
             context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "🎉 BOOM! Dein Guthaben ist da!\n\n"
+                    "🎉 BOOM! Dein Guthaben ist eingegangen!\n\n"
                     f"💰 Aktuelles Guthaben: {balance:.4f} SOL\n\n"
-                    "Ready für profitable Trades? 🎯"
+                    "Jetzt wird's spannend! Ready für deine ersten\n"
+                    "profitable Trades? 🎯\n\n"
+                    "Mit deinem Guthaben können wir jetzt richtig\n"
+                    "durchstarten und die besten Chancen nutzen!"
                 ),
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🚀 Let's go!", callback_data="start_trading")]
+                    [InlineKeyboardButton("🚀 Let's go!", callback_data="start_trading")],
+                    [InlineKeyboardButton("💰 Wallet anzeigen", callback_data="show_wallet")]
                 ])
             )
 
@@ -716,10 +788,15 @@ def check_balance_callback(context: CallbackContext):
 def send_sol_success(update: Update, amount: float, to_address: str):
     """Sendet eine Erfolgsmeldung nach SOL-Überweisung"""
     update.message.reply_text(
-        "✨ SOL erfolgreich gesendet!\n\n"
+        "✨ Transaktion erfolgreich ausgeführt!\n\n"
         f"💫 Betrag: {amount:.4f} SOL\n"
         f"📍 An: {to_address[:8]}...{to_address[-8:]}\n\n"
-        "Dein Transfer wurde erfolgreich ausgeführt! 🎯"
+        "Deine SOL sind sicher unterwegs! 🚀\n\n"
+        "Was möchtest du als Nächstes tun?",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("💰 Wallet anzeigen", callback_data="show_wallet")],
+            [InlineKeyboardButton("📤 Weitere SOL senden", callback_data="send_sol")]
+        ])
     )
 
 
