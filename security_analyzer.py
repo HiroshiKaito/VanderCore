@@ -166,6 +166,7 @@ class SecurityAnalyzer:
 
         except Exception as e:
             logger.error(f"Fehler bei der Schweregrad-Berechnung: {e}")
+            return 5  # Default severity value in case of error: {e}")
             return 5
 
 

@@ -124,7 +124,7 @@ class WebhookManager:
 
             # Lösche alten Webhook
             bot.delete_webhook()
-            time.sleep(1)
+            time.sleep(1)  # Warte kurz nach dem Löschenime.sleep(1)
 
             # Setze neuen Webhook mit optimierten Einstellungen
             bot.set_webhook(
