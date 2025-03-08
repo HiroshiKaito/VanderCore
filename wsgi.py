@@ -1,9 +1,9 @@
-
 import logging
 from flask import Flask
 from bot import TelegramBot
 import os
 import webhook_bot  # Ensure the webhook module is correctly loaded
+import nltk
 
 # Configure logging
 logging.basicConfig(
@@ -15,6 +15,14 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Download required NLTK data
+try:
+    logger.info("Downloading required NLTK data...")
+    nltk.download(['punkt', 'averaged_perceptron_tagger', 'vader_lexicon'])
+    logger.info("NLTK data download completed")
+except Exception as e:
+    logger.error(f"Failed to download NLTK data: {e}")
 
 # Create Flask app
 app = Flask(__name__)

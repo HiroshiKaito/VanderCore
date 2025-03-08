@@ -1,5 +1,7 @@
 import logging
 from textblob import TextBlob
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import nltk
 import requests
 from datetime import datetime, timedelta
 import json
@@ -11,6 +13,12 @@ logger = logging.getLogger(__name__)
 class SentimentAnalyzer:
     def __init__(self):
         """Initialisiert den Sentiment Analyzer"""
+        try:
+            self.vader = SentimentIntensityAnalyzer()
+        except Exception as e:
+            logger.error(f"Fehler beim Laden von VADER: {e}")
+            self.vader = None
+
         self.coingecko_api = "https://api.coingecko.com/api/v3"
         self.dex_screener_api = "https://api.dexscreener.com/latest"
         self.nitter_api = "https://nitter.cz/search"
@@ -23,8 +31,35 @@ class SentimentAnalyzer:
 
         # Retry Konfiguration
         self.max_retries = 3
-        self.retry_delay = 2  # Sekunden
-        self.timeout = 15  # Sekunden
+        self.retry_delay = 2
+        self.timeout = 15
+
+    def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
+        """Analysiert Text-Sentiment mit VADER und TextBlob"""
+        try:
+            # VADER Analyse
+            if self.vader:
+                vader_scores = self.vader.polarity_scores(text)
+                vader_compound = vader_scores['compound']
+            else:
+                vader_compound = 0
+
+            # TextBlob Analyse
+            blob = TextBlob(text)
+            textblob_score = blob.sentiment.polarity
+
+            # Kombiniere die Scores
+            combined_score = (vader_compound + textblob_score) / 2 if self.vader else textblob_score
+            normalized_score = (combined_score + 1) / 2  # Konvertiere zu [0,1]
+
+            return {
+                'score': normalized_score,
+                'confidence': min(abs(vader_compound - textblob_score), 1) if self.vader else 0.5
+            }
+
+        except Exception as e:
+            logger.error(f"Fehler bei der Text-Sentiment-Analyse: {e}")
+            return {'score': 0.5, 'confidence': 0}
 
     async def analyze_market_sentiment(self) -> dict:
         """Analysiert die Marktstimmung aus verschiedenen Quellen"""
@@ -161,36 +196,47 @@ class SentimentAnalyzer:
             return ""
 
     async def _fetch_dex_data(self) -> Dict[str, Any]:
-        """Holt DEX-Daten für Solana mit Retry-Mechanismus"""
+        """Holt DEX-Daten für Solana mit verbesserter Fehlerbehandlung"""
         try:
+            # Korrekte Solana Token Adresse
+            sol_token_address = "So11111111111111111111111111111111111111112"
+
             # Versuche zuerst die Token-spezifische API
             response = await self._fetch_with_retry(
-                f"{self.dex_screener_api}/pairs/solana/So11111111111111111111111111111111111111112"
+                f"{self.dex_screener_api}/latest/pairs/solana/{sol_token_address}"
             )
 
-            if response:
+            if response and response.status_code == 200:
                 data = response.json()
                 if 'pairs' in data:
                     logger.info("DEX Daten erfolgreich abgerufen")
                     return data
 
-            # Fallback auf die allgemeine Pairs API
+            # Fallback: Versuche die Top-Pairs API
             response = await self._fetch_with_retry(
-                f"{self.dex_screener_api}/pairs/solana"
+                f"{self.dex_screener_api}/latest/pairs/solana/top"
             )
 
-            if response:
+            if response and response.status_code == 200:
                 data = response.json()
                 if 'pairs' in data:
-                    logger.info("DEX Daten (Fallback) erfolgreich abgerufen")
-                    return data
-                logger.warning("Unerwartetes DEX Screener Datenformat")
+                    # Filtere nach SOL/USDC Paaren
+                    sol_pairs = [
+                        pair for pair in data['pairs']
+                        if (pair.get('baseToken', {}).get('symbol', '').upper() == 'SOL' and
+                            pair.get('quoteToken', {}).get('symbol', '').upper() == 'USDC')
+                    ]
 
-            return {}
+                    if sol_pairs:
+                        logger.info("SOL/USDC Pairs gefunden in Top-Pairs")
+                        return {'pairs': sol_pairs}
+
+            logger.warning("Keine SOL/USDC Paare gefunden")
+            return {'pairs': []}
 
         except Exception as e:
             logger.error(f"Fehler beim Abrufen der DEX-Daten: {e}")
-            return {}
+            return {'pairs': []}
 
     def _analyze_coingecko_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert CoinGecko Daten für Sentiment"""
@@ -223,7 +269,7 @@ class SentimentAnalyzer:
             return {'score': 0.5, 'confidence': 0}
 
     def _analyze_social_sentiment(self, text_data: str) -> Dict[str, Any]:
-        """Analysiert Social Media Text mit TextBlob"""
+        """Analysiert Social Media Text mit VADER und TextBlob"""
         try:
             if not text_data:
                 return {'score': 0.5, 'confidence': 0}
@@ -232,40 +278,12 @@ class SentimentAnalyzer:
             text_data = ' '.join(text_data.split())  # Normalisiere Whitespace
             text_data = text_data.replace('\n', ' ').strip()
 
-            blob = TextBlob(text_data)
-            sentiment_scores = []
-
-            for sentence in blob.sentences:
-                # Filtere leere oder zu kurze Sätze
-                if len(sentence.words) < 3:
-                    continue
-
-                sentiment_scores.append(sentence.sentiment.polarity)
-
-            if not sentiment_scores:
-                logger.warning("Keine verwertbaren Sätze für Sentiment-Analyse gefunden")
-                return {'score': 0.5, 'confidence': 0}
-
-            avg_sentiment = sum(sentiment_scores) / len(sentiment_scores)
-            normalized_score = (avg_sentiment + 1) / 2  # Konvertiert von [-1,1] zu [0,1]
-
-            return {
-                'score': normalized_score,
-                'confidence': min(len(sentiment_scores) / 10, 1),  # Konfidenz basierend auf Datenmenge
-                'metrics': {
-                    'sample_size': len(sentiment_scores),
-                    'raw_sentiment': avg_sentiment,
-                    'sentiment_distribution': {
-                        'positive': sum(1 for s in sentiment_scores if s > 0.1),
-                        'neutral': sum(1 for s in sentiment_scores if -0.1 <= s <= 0.1),
-                        'negative': sum(1 for s in sentiment_scores if s < -0.1)
-                    }
-                }
-            }
+            return self._analyze_text_sentiment(text_data)
 
         except Exception as e:
             logger.error(f"Fehler bei der Social Media Sentiment-Analyse: {e}")
             return {'score': 0.5, 'confidence': 0}
+
 
     def _analyze_dex_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert DEX-Daten für Sentiment"""
