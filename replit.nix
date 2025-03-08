@@ -1,5 +1,6 @@
 {pkgs}: {
   deps = [
+    pkgs.wget
     pkgs.cacert
     pkgs.qhull
     pkgs.pkg-config

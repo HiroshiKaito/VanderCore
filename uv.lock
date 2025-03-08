@@ -392,15 +392,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cloudflared"
-version = "1.0.0.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "setuptools-scm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/71/cfafdb22c8977a23f4dfda3b5b481ebade5f8c2bf067c708683b85d108fe/cloudflared-1.0.0.2.tar.gz", hash = "sha256:2dcd8ac0b6ae48e61367c86398ea1205db54fea35fdf2bc4d76650919ff93c4e", size = 2587 }
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1724,7 +1715,6 @@ dependencies = [
     { name = "base58" },
     { name = "ccxt" },
     { name = "certifi" },
-    { name = "cloudflared" },
     { name = "flask" },
     { name = "flask-socketio" },
     { name = "matplotlib" },
@@ -1759,7 +1749,6 @@ requires-dist = [
     { name = "base58", specifier = ">=2.1.1" },
     { name = "ccxt", specifier = ">=4.4.30" },
     { name = "certifi", specifier = "==2023.7.22" },
-    { name = "cloudflared", specifier = ">=1.0.0.2" },
     { name = "flask", specifier = ">=3.1.0" },
     { name = "flask-socketio", specifier = ">=5.5.1" },
     { name = "matplotlib", specifier = ">=3.10.1" },
@@ -1981,19 +1970,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d1/53/43d99d7687e8cdef5ab5f9ec5eaf2c0423c2b35133a2b7e7bc276fc32b21/setuptools-75.8.2.tar.gz", hash = "sha256:4880473a969e5f23f2a2be3646b2dfd84af9028716d398e46192f84bc36900d2", size = 1344083 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/38/7d7362e031bd6dc121e5081d8cb6aa6f6fedf2b67bf889962134c6da4705/setuptools-75.8.2-py3-none-any.whl", hash = "sha256:558e47c15f1811c1fa7adbd0096669bf76c1d3f433f58324df69f3f5ecac4e8f", size = 1229385 },
-]
-
-[[package]]
-name = "setuptools-scm"
-version = "8.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-    { name = "setuptools" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4b/bd/c5d16dd95900567e09744af92119da7abc5f447320d53ec1d9415ec30263/setuptools_scm-8.2.0.tar.gz", hash = "sha256:a18396a1bc0219c974d1a74612b11f9dce0d5bd8b1dc55c65f6ac7fd609e8c28", size = 77572 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/7c/5a9799042320242c383c4485a2771a37d49e8ce2312ca647653d2fd1a7a4/setuptools_scm-8.2.0-py3-none-any.whl", hash = "sha256:136e2b1d393d709d2bcf26f275b8dec06c48b811154167b0fd6bb002aad17d6d", size = 43944 },
 ]
 
 [[package]]
