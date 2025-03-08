@@ -4,7 +4,9 @@ import json
 import atexit
 import time
 import threading
+import socket
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 from flask import Flask, jsonify, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -36,64 +38,156 @@ wallet_manager = None
 user_wallets = {}
 user_private_keys = {}
 
-# Thread Pool für parallele Verarbeitung
-executor = ThreadPoolExecutor(max_workers=10)
+class WebhookManager:
+    def __init__(self):
+        self.active = False
+        self.last_check = 0
+        self.error_count = 0
+        self.max_retries = 3
+        self.check_interval = 60
+        self.webhook_url = None
+        self.base_url = None
 
-def get_replit_url():
-    """Generiert die Replit URL"""
-    repl_owner = os.environ.get('REPL_OWNER')
-    repl_slug = os.environ.get('REPL_SLUG')
-    if not repl_owner or not repl_slug:
-        raise ValueError("Replit Umgebungsvariablen nicht gefunden")
-    return f"https://{repl_slug}.{repl_owner}.repl.co"
+    def check_port_open(self, host, port):
+        """Überprüft ob ein Port erreichbar ist"""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)
+        try:
+            result = sock.connect_ex((host, port))
+            return result == 0
+        finally:
+            sock.close()
 
-def verify_webhook():
-    """Überprüft den Webhook-Status"""
-    try:
-        webhook_info = bot.get_webhook_info()
-        expected_url = f"{get_replit_url()}/{config.TELEGRAM_TOKEN}"
-
-        if webhook_info.url != expected_url:
-            logger.warning("Webhook-URL stimmt nicht überein")
-            return False
-
-        if webhook_info.last_error_date:
-            last_error = time.time() - webhook_info.last_error_date
-            if last_error < 60:  # Fehler in der letzten Minute
-                logger.warning(f"Webhook-Fehler vor {last_error} Sekunden")
+    def check_connectivity(self):
+        """Überprüft die Netzwerkverbindung"""
+        try:
+            # Prüfe ob Port 5000 erreichbar ist
+            if not self.check_port_open('0.0.0.0', 5000):
+                logger.error("Port 5000 ist nicht erreichbar")
                 return False
 
-        return True
-    except Exception as e:
-        logger.error(f"Fehler bei Webhook-Verifizierung: {e}")
-        return False
-
-def setup_webhook():
-    """Richtet den Webhook ein"""
-    try:
-        webhook_url = f"{get_replit_url()}/{config.TELEGRAM_TOKEN}"
-        logger.info(f"Setze Webhook-URL: {webhook_url}")
-
-        # Lösche alten Webhook und setze neuen
-        bot.delete_webhook()
-        time.sleep(0.1)
-        bot.set_webhook(
-            url=webhook_url,
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
-        )
-
-        # Verifiziere Setup
-        if verify_webhook():
-            logger.info("Webhook erfolgreich eingerichtet")
+            # Prüfe Telegram API Verbindung
+            if not bot:
+                return False
+            bot.get_me()
             return True
+        except Exception as e:
+            logger.error(f"Konnektivitätsprüfung fehlgeschlagen: {e}")
+            return False
 
-        logger.error("Webhook-Einrichtung fehlgeschlagen")
-        return False
+    def get_replit_domain(self):
+        """Ermittelt die aktuelle Replit-Domain"""
+        try:
+            # Versuche verschiedene Umgebungsvariablen
+            repl_id = os.environ.get('REPL_ID')
+            repl_slug = os.environ.get('REPL_SLUG')
+            repl_owner = os.environ.get('REPL_OWNER')
 
-    except Exception as e:
-        logger.error(f"Fehler beim Einrichten des Webhooks: {e}")
-        return False
+            # Prüfe verfügbare Domänen
+            domains = [
+                f"{repl_slug}.{repl_owner}.repl.co",
+                f"{repl_id}.id.repl.co",
+                f"{repl_slug}.repl.co"
+            ]
+
+            for domain in domains:
+                if domain and self.validate_domain(domain):
+                    return f"https://{domain}"
+
+            return None
+        except Exception as e:
+            logger.error(f"Fehler bei Domain-Ermittlung: {e}")
+            return None
+
+    def validate_domain(self, domain):
+        """Validiert eine Domain"""
+        try:
+            socket.gethostbyname(domain)
+            return True
+        except socket.gaierror:
+            return False
+
+    def setup_webhook(self):
+        """Richtet den Webhook ein"""
+        try:
+            if not self.check_connectivity():
+                logger.error("Keine Verbindung möglich")
+                return False
+
+            # Hole aktuelle Domain
+            base_url = self.get_replit_domain()
+            if not base_url:
+                logger.error("Keine gültige Domain gefunden")
+                return False
+
+            # Setze Webhook
+            webhook_url = f"{base_url}/{config.TELEGRAM_TOKEN}"
+            logger.info(f"Setze Webhook-URL: {webhook_url}")
+
+            # Lösche alten Webhook
+            bot.delete_webhook()
+            time.sleep(1)
+
+            # Setze neuen Webhook
+            bot.set_webhook(
+                url=webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                max_connections=40
+            )
+
+            # Verifiziere Setup
+            webhook_info = bot.get_webhook_info()
+            if webhook_info.url == webhook_url:
+                self.webhook_url = webhook_url
+                self.active = True
+                self.error_count = 0
+                logger.info("Webhook erfolgreich eingerichtet")
+                return True
+
+            logger.error("Webhook-URL stimmt nicht überein")
+            return False
+
+        except Exception as e:
+            logger.error(f"Fehler beim Webhook-Setup: {e}")
+            return False
+
+    def monitor(self):
+        """Überwacht den Webhook-Status"""
+        retry_delays = [5, 15, 30, 60, 300]
+        current_retry = 0
+
+        while True:
+            try:
+                if not self.active or not self.check_connectivity():
+                    delay = retry_delays[min(current_retry, len(retry_delays) - 1)]
+                    logger.info(f"Webhook inaktiv, versuche Neustart in {delay} Sekunden")
+                    time.sleep(delay)
+
+                    if self.setup_webhook():
+                        current_retry = 0
+                        continue
+
+                    current_retry += 1
+                    continue
+
+                # Prüfe Webhook-Status
+                webhook_info = bot.get_webhook_info()
+                if (webhook_info.url != self.webhook_url or 
+                    webhook_info.last_error_date or 
+                    not self.check_connectivity()):
+                    logger.warning("Webhook-Problem erkannt")
+                    self.active = False
+                    current_retry = 0
+                    continue
+
+                time.sleep(self.check_interval)
+
+            except Exception as e:
+                logger.error(f"Fehler bei Webhook-Überwachung: {e}")
+                time.sleep(60)
+
+webhook_manager = WebhookManager()
 
 def initialize_bot():
     """Initialisiert den Bot"""
@@ -109,7 +203,7 @@ def initialize_bot():
         from telegram import Bot
         bot = Bot(token=config.TELEGRAM_TOKEN)
 
-        # Erstelle Dispatcher
+        # Erstelle Dispatcher mit optimierten Einstellungen
         dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
 
         # Teste Bot-Verbindung
@@ -134,23 +228,13 @@ def initialize_bot():
         logger.error(f"Fehler bei Bot-Initialisierung: {e}")
         return False
 
-def register_handlers():
-    """Registriert die Bot-Handler"""
-    try:
-        dispatcher.add_handler(CommandHandler("start", start))
-        dispatcher.add_handler(CommandHandler("wallet", wallet_command))
-        dispatcher.add_handler(CallbackQueryHandler(button_handler))
-        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
-        dispatcher.add_error_handler(error_handler)
-        logger.info("Handler registriert")
-    except Exception as e:
-        logger.error(f"Fehler beim Registrieren der Handler: {e}")
-        raise
-
 @app.route('/' + config.TELEGRAM_TOKEN, methods=['POST'])
 def webhook():
     """Verarbeitet eingehende Webhook-Anfragen"""
     try:
+        if not webhook_manager.active:
+            return jsonify({'error': 'Webhook nicht aktiv'}), 503
+
         json_data = request.get_json()
         update = Update.de_json(json_data, bot)
         dispatcher.process_update(update)
@@ -163,20 +247,20 @@ def webhook():
 def health_check():
     """Health Check Endpoint"""
     try:
-        if not bot or not dispatcher:
-            return jsonify({'status': 'error', 'message': 'Bot nicht initialisiert'}), 500
+        status = {
+            'status': 'healthy' if webhook_manager.active else 'degraded',
+            'bot_info': bot.username if bot else None,
+            'webhook_url': webhook_manager.webhook_url,
+            'error_count': webhook_manager.error_count,
+            'last_check': webhook_manager.last_check,
+            'connectivity': webhook_manager.check_connectivity()
+        }
 
-        # Prüfe Webhook-Status
-        if not verify_webhook():
-            # Versuche Webhook neu einzurichten
-            if not setup_webhook():
-                return jsonify({'status': 'error', 'message': 'Webhook-Problem'}), 500
+        if not webhook_manager.active:
+            webhook_manager.setup_webhook()
+            status['recovery'] = 'initiated'
 
-        return jsonify({
-            'status': 'healthy',
-            'bot_username': bot.username,
-            'webhook_active': True
-        })
+        return jsonify(status)
 
     except Exception as e:
         logger.error(f"Fehler beim Health Check: {e}")
@@ -358,34 +442,36 @@ def cleanup():
 
 atexit.register(cleanup)
 
-def monitor_webhook():
-    """Überwacht den Webhook-Status"""
-    while True:
-        try:
-            if not verify_webhook():
-                logger.warning("Webhook-Problem erkannt")
-                setup_webhook()
-            time.sleep(300)  # Alle 5 Minuten prüfen
-        except Exception as e:
-            logger.error(f"Fehler bei Webhook-Überwachung: {e}")
-            time.sleep(60)
+def register_handlers():
+    """Registriert die Bot-Handler"""
+    try:
+        dispatcher.add_handler(CommandHandler("start", start))
+        dispatcher.add_handler(CommandHandler("wallet", wallet_command))
+        dispatcher.add_handler(CallbackQueryHandler(button_handler))
+        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
+        dispatcher.add_error_handler(error_handler)
+        logger.info("Handler registriert")
+    except Exception as e:
+        logger.error(f"Fehler beim Registrieren der Handler: {e}")
+        raise
 
 def main():
-    """Hauptfunktion"""
+    """Hauptfunktion mit verbesserter Fehlerbehandlung"""
     try:
         # Initialisiere Bot
         if not initialize_bot():
             logger.error("Bot-Initialisierung fehlgeschlagen")
             return
 
-        # Richte Webhook ein
-        if not setup_webhook():
-            logger.error("Webhook-Einrichtung fehlgeschlagen")
-            return
-
         # Starte Webhook-Monitor in separatem Thread
-        monitor_thread = threading.Thread(target=monitor_webhook, daemon=True)
+        monitor_thread = threading.Thread(target=webhook_manager.monitor, daemon=True)
         monitor_thread.start()
+        logger.info("Webhook-Monitor gestartet")
+
+        # Initialer Webhook-Setup
+        if not webhook_manager.setup_webhook():
+            logger.error("Initialer Webhook-Setup fehlgeschlagen")
+            # Wird vom Monitor automatisch wiederholt
 
         # Starte Flask Server
         logger.info("Starte Flask Server auf Port 5000...")
@@ -397,6 +483,9 @@ def main():
             threaded=True
         )
 
+    except KeyboardInterrupt:
+        logger.info("Bot wird durch Benutzer beendet")
+        cleanup()
     except Exception as e:
         logger.critical(f"Fataler Fehler: {e}")
         cleanup()
