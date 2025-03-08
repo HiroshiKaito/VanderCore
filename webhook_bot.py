@@ -93,11 +93,10 @@ def button_handler(update: Update, context: CallbackContext):
             if user_id in user_wallets:
                 query.message.reply_text(
                     "✨ Du hast bereits eine aktive Wallet.\n\n"
-                    f"Wallet-Adresse:\n`{user_wallets[user_id]}`\n\n"
+                    f"Wallet-Adresse:\n{user_wallets[user_id]}\n\n"
                     "Verfügbare Befehle:\n"
                     "/wallet - Wallet-Status anzeigen\n"
                     "/stop_signals - Signalsuche beenden",
-                    parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
                     ])
@@ -117,9 +116,9 @@ def button_handler(update: Update, context: CallbackContext):
                     query.message.reply_text(
                         "🌟 Wallet erfolgreich erstellt!\n\n"
                         "🔐 Private Key (streng geheim):\n"
-                        f"`{private_key}`\n\n"
+                        f"{private_key}\n\n"
                         "🔑 Öffentliche Wallet-Adresse:\n"
-                        f"`{public_key}`\n\n"
+                        f"{public_key}\n\n"
                         "⚠️ WICHTIG:\n"
                         "• Private Key niemals teilen\n"
                         "• Sicheres Backup erstellen\n"
@@ -128,7 +127,6 @@ def button_handler(update: Update, context: CallbackContext):
                         "Verfügbare Befehle:\n"
                         "/wallet - Wallet-Status anzeigen\n"
                         "/stop_signals - Signalsuche beenden",
-                        parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
                         ])
@@ -204,23 +202,26 @@ def start(update: Update, context: CallbackContext):
 
         # Prüfe ob User bereits eine Wallet hat
         if user_id in user_wallets:
+            # Aufteilen in zwei separate Nachrichten für bessere Formatierung
             update.message.reply_text(
                 "🌑 Vander hier. Willkommen zurück.\n\n"
-                f"Deine Wallet ist aktiviert:\n"
-                f"`{user_wallets[user_id]}`\n\n"
                 "Die Märkte bewegen sich.\n"
-                "Zeit für Action.\n\n"
+                "Zeit für Action."
+            )
+
+            update.message.reply_text(
+                f"Deine Wallet:\n{user_wallets[user_id]}\n\n"
                 "Verfügbare Befehle:\n"
                 "/wallet - Wallet-Status anzeigen\n"
                 "/stop_signals - Signalsuche beenden",
-                parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
                 ])
             )
             return
 
-        update.message.reply_text(
+        # Für neue Nutzer
+        intro_message = (
             "🌑 Vander hier.\n\n"
             "Ich operiere in den Tiefen der Blockchain.\n"
             "Meine Spezialität: profitable Trading-Opportunitäten aufspüren.\n\n"
@@ -230,11 +231,20 @@ def start(update: Update, context: CallbackContext):
             "• Blitzschnelle Order-Ausführung\n"
             "• Automatisierte Risikokontrolle\n\n"
             "Ich finde die Trades, die andere übersehen.\n"
-            "Du entscheidest, ich handle.\n\n"
-            "Verfügbare Befehle:\n"
+            "Du entscheidest, ich handle."
+        )
+
+        commands_message = (
+            "\nVerfügbare Befehle:\n"
             "/wallet - Wallet-Status anzeigen\n"
             "/stop_signals - Signalsuche beenden\n\n"
-            "Bereit für echtes Trading?",
+            "Bereit für echtes Trading?"
+        )
+
+        # Sende Nachrichten getrennt
+        update.message.reply_text(intro_message)
+        update.message.reply_text(
+            commands_message,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
             ])
@@ -244,7 +254,8 @@ def start(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
         update.message.reply_text(
-            "⚠️ Fehler aufgetreten. Versuche es erneut mit /start\n\n"
+            "⚠️ Ein Fehler ist aufgetreten.\n"
+            "Bitte versuche es erneut mit /start\n\n"
             "Verfügbare Befehle:\n"
             "/wallet - Wallet-Status anzeigen\n"
             "/stop_signals - Signalsuche beenden"
