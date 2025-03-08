@@ -14,14 +14,21 @@ class SentimentAnalyzer:
     def __init__(self):
         """Initialisiert den Sentiment Analyzer"""
         try:
+            # Stelle sicher, dass VADER Lexikon geladen ist
+            try:
+                nltk.data.find('sentiment/vader_lexicon.zip')
+            except LookupError:
+                nltk.download('vader_lexicon')
+
             self.vader = SentimentIntensityAnalyzer()
         except Exception as e:
             logger.error(f"Fehler beim Laden von VADER: {e}")
             self.vader = None
 
+        # API Endpoints
         self.coingecko_api = "https://api.coingecko.com/api/v3"
-        self.dex_screener_api = "https://api.dexscreener.com/latest"
-        self.nitter_api = "https://nitter.cz/search"
+        self.dex_screener_api = "https://api.dexscreener.com/latest/dex"
+        self.nitter_api = "https://nitter.net/search"
 
         # API Konfiguration
         self.headers = {
@@ -111,7 +118,7 @@ class SentimentAnalyzer:
             return {'overall_score': 0.5, 'sources': {}, 'error': str(e)}
 
     async def _fetch_with_retry(self, url: str, params: Dict = None) -> Optional[requests.Response]:
-        """Generische Fetch-Funktion mit Retry-Mechanismus"""
+        """Generische Fetch-Funktion mit verbessertem Retry-Mechanismus"""
         for attempt in range(self.max_retries):
             try:
                 response = requests.get(
@@ -130,6 +137,10 @@ class SentimentAnalyzer:
                     await asyncio.sleep(wait_time)
                     continue
 
+                if response.status_code == 404:
+                    logger.warning(f"Endpoint nicht gefunden: {url}")
+                    return None
+
                 logger.warning(f"API Fehler: {response.status_code} für URL: {url}")
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(self.retry_delay)
@@ -147,7 +158,7 @@ class SentimentAnalyzer:
         return None
 
     async def _fetch_coingecko_data(self) -> Dict[str, Any]:
-        """Holt Solana-Daten von CoinGecko mit Retry-Mechanismus"""
+        """Holt Solana-Daten von CoinGecko mit verbesserter Fehlerbehandlung"""
         try:
             response = await self._fetch_with_retry(
                 f"{self.coingecko_api}/simple/price",
@@ -173,28 +184,6 @@ class SentimentAnalyzer:
             logger.error(f"Fehler beim Abrufen der CoinGecko-Daten: {e}")
             return {}
 
-    async def _fetch_social_data(self) -> str:
-        """Holt Social Media Daten über Nitter"""
-        try:
-            response = await self._fetch_with_retry(
-                self.nitter_api,
-                params={
-                    'f': 'tweets',
-                    'q': 'solana language:de OR language:en',
-                    'since': '24h'
-                }
-            )
-
-            if response:
-                logger.info("Social Media Daten erfolgreich abgerufen")
-                return response.text
-
-            return ""
-
-        except Exception as e:
-            logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
-            return ""
-
     async def _fetch_dex_data(self) -> Dict[str, Any]:
         """Holt DEX-Daten für Solana mit verbesserter Fehlerbehandlung"""
         try:
@@ -203,7 +192,7 @@ class SentimentAnalyzer:
 
             # Versuche zuerst die Token-spezifische API
             response = await self._fetch_with_retry(
-                f"{self.dex_screener_api}/latest/pairs/solana/{sol_token_address}"
+                f"{self.dex_screener_api}/tokens/{sol_token_address}"
             )
 
             if response and response.status_code == 200:
@@ -214,7 +203,7 @@ class SentimentAnalyzer:
 
             # Fallback: Versuche die Top-Pairs API
             response = await self._fetch_with_retry(
-                f"{self.dex_screener_api}/latest/pairs/solana/top"
+                f"{self.dex_screener_api}/pairs/solana"
             )
 
             if response and response.status_code == 200:
@@ -228,7 +217,7 @@ class SentimentAnalyzer:
                     ]
 
                     if sol_pairs:
-                        logger.info("SOL/USDC Pairs gefunden in Top-Pairs")
+                        logger.info("SOL/USDC Pairs gefunden")
                         return {'pairs': sol_pairs}
 
             logger.warning("Keine SOL/USDC Paare gefunden")
@@ -237,6 +226,37 @@ class SentimentAnalyzer:
         except Exception as e:
             logger.error(f"Fehler beim Abrufen der DEX-Daten: {e}")
             return {'pairs': []}
+
+    async def _fetch_social_data(self) -> str:
+        """Holt Social Media Daten mit Fallback-Mechanismen"""
+        try:
+            # Liste von Nitter Instanzen
+            nitter_instances = [
+                "https://nitter.net",
+                "https://nitter.cz",
+                "https://nitter.ca"
+            ]
+
+            for instance in nitter_instances:
+                response = await self._fetch_with_retry(
+                    f"{instance}/search",
+                    params={
+                        'f': 'tweets',
+                        'q': 'solana language:de OR language:en',
+                        'since': '24h'
+                    }
+                )
+
+                if response and response.status_code == 200:
+                    logger.info("Social Media Daten erfolgreich abgerufen")
+                    return response.text
+
+            logger.warning("Keine Nitter Instanz verfügbar")
+            return ""
+
+        except Exception as e:
+            logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
+            return ""
 
     def _analyze_coingecko_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert CoinGecko Daten für Sentiment"""
