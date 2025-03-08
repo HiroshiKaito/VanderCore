@@ -92,9 +92,11 @@ def button_handler(update: Update, context: CallbackContext):
             # Prüfe ob User bereits eine Wallet hat
             if user_id in user_wallets:
                 query.message.reply_text(
-                    "✨ Deine Wallet existiert bereits.\n\n"
-                    f"`{user_wallets[user_id]}`\n\n"
-                    "Bereit zum Handeln?",
+                    "✨ Du hast bereits eine aktive Wallet.\n\n"
+                    f"Wallet-Adresse:\n`{user_wallets[user_id]}`\n\n"
+                    "Verfügbare Befehle:\n"
+                    "/wallet - Wallet-Status anzeigen\n"
+                    "/stop_signals - Signalsuche beenden",
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
@@ -111,24 +113,21 @@ def button_handler(update: Update, context: CallbackContext):
                     user_wallets[user_id] = public_key
                     save_user_wallets()
 
-                    # Sende private_key als private Nachricht
+                    # Sende alle Wallet-Informationen in einer Nachricht
                     query.message.reply_text(
-                        "⚡ Dein Private Key. Behandle ihn mit höchster Sorgfalt.\n\n"
+                        "🌟 Wallet erfolgreich erstellt!\n\n"
+                        "🔐 Private Key (streng geheim):\n"
                         f"`{private_key}`\n\n"
-                        "Drei goldene Regeln:\n"
-                        "• Teile ihn mit niemandem\n"
-                        "• Sichere Backup ist Pflicht\n"
-                        "• Keine Recovery möglich\n\n"
-                        "Deine Sicherheit liegt in deiner Hand.",
-                        parse_mode='Markdown'
-                    )
-
-                    # Sende öffentliche Bestätigung
-                    query.message.reply_text(
-                        "✨ Wallet erfolgreich initialisiert.\n\n"
-                        f"Deine Adresse:\n`{public_key}`\n\n"
-                        "Die profitable Zone wartet.\n"
-                        "Starten wir?",
+                        "🔑 Öffentliche Wallet-Adresse:\n"
+                        f"`{public_key}`\n\n"
+                        "⚠️ WICHTIG:\n"
+                        "• Private Key niemals teilen\n"
+                        "• Sicheres Backup erstellen\n"
+                        "• Keine Wiederherstellung möglich\n\n"
+                        "Ready für's Trading?\n\n"
+                        "Verfügbare Befehle:\n"
+                        "/wallet - Wallet-Status anzeigen\n"
+                        "/stop_signals - Signalsuche beenden",
                         parse_mode='Markdown',
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
@@ -151,7 +150,10 @@ def button_handler(update: Update, context: CallbackContext):
                         "Der Weg zum Erfolg:\n"
                         "1. Wallet erstellen\n"
                         "2. Trading starten\n"
-                        "3. Gewinne einfahren",
+                        "3. Gewinne einfahren\n\n"
+                        "Verfügbare Befehle:\n"
+                        "/wallet - Wallet-Status anzeigen\n"
+                        "/stop_signals - Signalsuche beenden",
                         reply_markup=InlineKeyboardMarkup([
                             [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
                         ])
@@ -170,19 +172,28 @@ def button_handler(update: Update, context: CallbackContext):
                     "2. Bei hochprofitablen Chancen wirst du benachrichtigt\n"
                     "3. Du prüfst und bestätigst\n"
                     "4. Ich führe präzise aus\n\n"
-                    "Status: Aktiv und scannen"
+                    "Status: Aktiv und scannen\n\n"
+                    "Verfügbare Befehle:\n"
+                    "/wallet - Wallet-Status anzeigen\n"
+                    "/stop_signals - Signalsuche beenden"
                 )
 
             except Exception as e:
                 logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
                 query.message.reply_text(
-                    "⚠️ Fehler. Starte neu mit /start"
+                    "⚠️ Fehler. Starte neu mit /start\n\n"
+                    "Verfügbare Befehle:\n"
+                    "/wallet - Wallet-Status anzeigen\n"
+                    "/stop_signals - Signalsuche beenden"
                 )
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {str(e)}")
         query.message.reply_text(
-            "⚠️ Verbindungsfehler. Starte neu mit /start"
+            "⚠️ Verbindungsfehler. Starte neu mit /start\n\n"
+            "Verfügbare Befehle:\n"
+            "/wallet - Wallet-Status anzeigen\n"
+            "/stop_signals - Signalsuche beenden"
         )
 
 def start(update: Update, context: CallbackContext):
@@ -194,10 +205,13 @@ def start(update: Update, context: CallbackContext):
         # Prüfe ob User bereits eine Wallet hat
         if user_id in user_wallets:
             update.message.reply_text(
-                "🌑 Willkommen zurück.\n\n"
+                "🌑 Vander hier. Willkommen zurück.\n\n"
                 f"Deine Wallet ist aktiviert:\n`{user_wallets[user_id]}`\n\n"
                 "Die Märkte bewegen sich.\n"
-                "Zeit für Action.",
+                "Zeit für Action.\n\n"
+                "Verfügbare Befehle:\n"
+                "/wallet - Wallet-Status anzeigen\n"
+                "/stop_signals - Signalsuche beenden",
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🎯 Trading starten", callback_data="start_signal_search")]
@@ -214,6 +228,9 @@ def start(update: Update, context: CallbackContext):
             "• Automatisierte Risikokontrolle\n\n"
             "Ich finde die Trades, die andere übersehen.\n"
             "Du entscheidest, ich handle.\n\n"
+            "Verfügbare Befehle:\n"
+            "/wallet - Wallet-Status anzeigen\n"
+            "/stop_signals - Signalsuche beenden\n\n"
             "Bereit für echtes Trading?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
@@ -229,6 +246,23 @@ def message_handler(update: Update, context: CallbackContext):
     """Genereller Message Handler"""
     # Handle andere Nachrichten hier
     pass
+
+def stop_signals(update: Update, context: CallbackContext):
+    """Stoppt die Signalsuche für einen User"""
+    user_id = str(update.effective_user.id)
+    if user_id in active_users:
+        active_users.remove(user_id)
+        update.message.reply_text(
+            "🔴 Signalsuche deaktiviert.\n"
+            "Du erhältst keine weiteren Trading-Signale.\n\n"
+            "Verfügbare Befehle:\n"
+            "/start - Bot neu starten\n"
+            "/wallet - Wallet-Status anzeigen\n"
+            "/signal_start - Signalsuche starten"
+        )
+    else:
+        update.message.reply_text("Signalsuche war nicht aktiv.")
+
 
 @app.route('/')
 def index():
@@ -288,6 +322,7 @@ def initialize_bot():
             Filters.text & ~Filters.command,
             message_handler
         ))
+        dispatcher.add_handler(CommandHandler("stop_signals", stop_signals))
 
         logger.info("Bot erfolgreich initialisiert")
         return True
