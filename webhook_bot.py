@@ -1,12 +1,13 @@
 """Telegram Bot mit Polling-Modus und Health-Check-Server für Replit"""
 import logging
 from flask import Flask, request, jsonify
-from telegram import Update
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler, Filters, 
     CallbackContext, Dispatcher, CallbackQueryHandler
 )
 from config import config
+from wallet_manager import WalletManager
 import os
 import json
 import atexit
@@ -14,7 +15,16 @@ import sys
 import requests
 import threading
 from time import sleep
-from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+import nltk
+
+# Download NLTK data
+try:
+    nltk.download('punkt')
+    nltk.download('averaged_perceptron_tagger')
+    nltk.download('wordnet')
+    nltk.download('vader_lexicon')
+except Exception as e:
+    print(f"NLTK Download Fehler: {e}")
 
 # Logging-Konfiguration
 logging.basicConfig(
@@ -34,13 +44,14 @@ app = Flask(__name__)
 updater = None
 dispatcher = None
 active_users = set()  # Set für aktive Nutzer
+wallet_manager = None
 
 def keep_alive():
     """Hält den Replit-Server am Leben"""
     while True:
         try:
-            url = f"https://{os.environ.get('REPL_SLUG')}.{os.environ.get('REPL_OWNER')}.repl.co"
-            requests.get(url + "/health")
+            logger.debug("Keep-alive ping wird ausgeführt...")
+            requests.get("http://127.0.0.1:5000/health")
             logger.debug("Keep-alive ping erfolgreich")
         except Exception as e:
             logger.warning(f"Keep-alive ping fehlgeschlagen: {e}")
@@ -54,9 +65,61 @@ def button_handler(update: Update, context: CallbackContext):
     try:
         query.answer()  # Bestätige den Button-Click
 
-        if query.data == "start_signal_search":
+        if query.data == "create_wallet":
+            logger.info(f"Wallet-Erstellung angefordert von User {user_id}")
+            try:
+                # Erstelle neue Wallet
+                public_key, private_key = wallet_manager.create_wallet()
+
+                if public_key and private_key:
+                    # Sende private_key als private Nachricht
+                    query.message.reply_text(
+                        "🔐 Hier ist dein Private Key. Bewahre ihn sicher auf!\n\n"
+                        f"`{private_key}`\n\n"
+                        "⚠️ Teile diesen Key NIEMALS mit anderen!",
+                        parse_mode='Markdown'
+                    )
+
+                    # Sende öffentliche Bestätigung
+                    query.message.reply_text(
+                        "✅ Wallet erfolgreich erstellt!\n\n"
+                        f"Deine Wallet-Adresse: `{public_key}`\n\n"
+                        "Möchtest du jetzt mit dem Trading beginnen?",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("Let's trade! 🚀", callback_data="start_signal_search")]
+                        ])
+                    )
+                else:
+                    raise Exception("Wallet-Erstellung fehlgeschlagen")
+
+            except Exception as e:
+                logger.error(f"Fehler bei Wallet-Erstellung: {e}")
+                query.message.reply_text("❌ Fehler bei der Wallet-Erstellung")
+
+        elif query.data == "load_wallet":
+            logger.info(f"Wallet-Import angefordert von User {user_id}")
+            query.message.reply_text(
+                "🔑 Bitte sende mir deinen Private Key, um deine Wallet zu laden.\n\n"
+                "⚠️ Sende den Key nur in einem privaten Chat!"
+            )
+            # Setze den nächsten Handler für den Private Key
+            context.user_data['expecting_private_key'] = True
+
+        elif query.data == "start_signal_search":
             logger.info(f"Signal-Suche aktiviert von User {user_id}")
             try:
+                # Prüfe ob Wallet existiert
+                if not wallet_manager.get_address():
+                    query.message.reply_text(
+                        "❌ Bitte erstelle oder lade zuerst eine Wallet!",
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("Neue Wallet erstellen", callback_data="create_wallet")],
+                            [InlineKeyboardButton("Existierende Wallet laden", callback_data="load_wallet")]
+                        ])
+                    )
+                    return
+
                 # Füge Benutzer zu aktiven Nutzern hinzu
                 active_users.add(user_id)
                 logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
@@ -69,7 +132,7 @@ def button_handler(update: Update, context: CallbackContext):
                 )
 
             except Exception as e:
-                logger.error(f"Detaillierter Fehler beim Starten des Signal Generators: {str(e)}")
+                logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
                 query.message.reply_text(
                     "❌ Fehler beim Aktivieren der Signal-Suche.\n"
                     "Bitte versuchen Sie es später erneut."
@@ -91,18 +154,11 @@ def start(update: Update, context: CallbackContext):
 
         update.message.reply_text(
             "👋 Hey! Ich bin Dexter - der beste Solana Trading Bot auf dem Markt!\n\n"
-            "Ich werde dir beim Trading helfen und:\n"
-            "✅ Trading Signale mit KI-Analyse generieren\n"
-            "✅ Risk Management überwachen\n"
-            "✅ Dein Portfolio tracken\n"
-            "✅ Marktanalysen durchführen\n\n"
-            "Verfügbare Befehle:\n"
-            "/wallet - Wallet-Verwaltung\n"
-            "/trades - Aktive Trades anzeigen\n"
-            "/hilfe - Weitere Hilfe anzeigen\n\n"
-            "Ready to trade? 🚀",
+            "Bevor wir loslegen können, brauchst du eine Wallet. "
+            "Was möchtest du tun?",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("Let's go! 🚀", callback_data="start_signal_search")]
+                [InlineKeyboardButton("Neue Wallet erstellen", callback_data="create_wallet")],
+                [InlineKeyboardButton("Existierende Wallet laden", callback_data="load_wallet")]
             ])
         )
         logger.info(f"Start-Nachricht erfolgreich an User {user_id} gesendet")
@@ -110,6 +166,44 @@ def start(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
         update.message.reply_text("❌ Es ist ein Fehler aufgetreten. Bitte versuche es später erneut.")
+
+def handle_private_key(update: Update, context: CallbackContext):
+    """Handler für eingehende Private Keys"""
+    try:
+        # Lösche die Nachricht sofort für Sicherheit
+        update.message.delete()
+
+        if wallet_manager.load_wallet(update.message.text):
+            update.message.reply_text(
+                "✅ Wallet erfolgreich geladen!\n\n"
+                "Möchtest du jetzt mit dem Trading beginnen?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Let's trade! 🚀", callback_data="start_signal_search")]
+                ])
+            )
+        else:
+            update.message.reply_text("❌ Ungültiger Private Key")
+
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Wallet: {e}")
+        update.message.reply_text("❌ Fehler beim Laden der Wallet")
+    finally:
+        # Zurücksetzen des Erwartungsstatus
+        if 'expecting_private_key' in context.user_data:
+            del context.user_data['expecting_private_key']
+
+def message_handler(update: Update, context: CallbackContext):
+    """Genereller Message Handler"""
+    if context.user_data.get('expecting_private_key'):
+        handle_private_key(update, context)
+    else:
+        # Handle andere Nachrichten hier
+        pass
+
+@app.route('/')
+def index():
+    """Root-Route für Health-Check"""
+    return jsonify({'status': 'running'})
 
 @app.route('/health')
 def health_check():
@@ -130,28 +224,6 @@ def health_check():
         logger.error(f"Health Check fehlgeschlagen: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-def initialize_bot():
-    """Initialisiere den Bot"""
-    global updater, dispatcher
-
-    try:
-        # Erstelle Updater
-        updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
-        dispatcher = updater.dispatcher
-
-        # Registriere Handler
-        dispatcher.add_handler(CommandHandler("start", start))
-
-        # Button Handler
-        dispatcher.add_handler(CallbackQueryHandler(button_handler))
-
-        logger.info("Bot erfolgreich initialisiert")
-        return True
-
-    except Exception as e:
-        logger.error(f"Fehler bei Bot-Initialisierung: {e}")
-        return False
-
 def run_health_server():
     """Startet den Health-Check-Server"""
     try:
@@ -164,6 +236,33 @@ def run_health_server():
     except Exception as e:
         logger.error(f"Fehler beim Starten des Health-Check-Servers: {e}")
         raise
+
+def initialize_bot():
+    """Initialisiere den Bot"""
+    global updater, dispatcher, wallet_manager
+
+    try:
+        # Erstelle Updater
+        updater = Updater(token=config.TELEGRAM_TOKEN, use_context=True)
+        dispatcher = updater.dispatcher
+
+        # Initialisiere Wallet Manager
+        wallet_manager = WalletManager(config.SOLANA_RPC_URL)
+
+        # Registriere Handler
+        dispatcher.add_handler(CommandHandler("start", start))
+        dispatcher.add_handler(CallbackQueryHandler(button_handler))
+        dispatcher.add_handler(MessageHandler(
+            Filters.text & ~Filters.command,
+            message_handler
+        ))
+
+        logger.info("Bot erfolgreich initialisiert")
+        return True
+
+    except Exception as e:
+        logger.error(f"Fehler bei Bot-Initialisierung: {e}")
+        return False
 
 def main():
     """Hauptfunktion"""
