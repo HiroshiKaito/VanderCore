@@ -4,7 +4,7 @@ modules = ["python3", "python-3.11", "nodejs-20"]
 channel = "stable-24_05"
 
 [workflows]
-runButton = "Project"
+runButton = "Solana Trading Bot"
 
 [[workflows.workflow]]
 name = "Project"
@@ -175,7 +175,7 @@ args = "gunicorn -c gunicorn_config.py wsgi:app"
 waitForPort = 5000
 
 [deployment]
-run = ["sh", "-c", "python3 bot.py"]
+run = ["sh", "-c", "gunicorn -c gunicorn_config.py wsgi:app"]
 
 [[ports]]
 localPort = 5000
