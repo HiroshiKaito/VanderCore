@@ -20,6 +20,7 @@ class WalletManager:
             logger.info(f"Initialisiere WalletManager mit RPC URL: {rpc_url}")
             self.client = Client(rpc_url, commitment="confirmed")
             self.keypair = None
+            self._active = False
 
             # Validiere RPC-Verbindung
             version = self.client.get_version()
@@ -29,11 +30,13 @@ class WalletManager:
             logger.error(f"Fehler bei der Initialisierung des WalletManager: {e}")
             raise
 
-    def create_wallet(self, user_id: str = None) -> tuple[str, str]:
+    def create_wallet(self) -> tuple[str, str]:
         """Erstellt eine neue Solana Wallet"""
         try:
             logger.info("Erstelle neue Solana-Wallet...")
             self.keypair = Keypair()
+            self._active = True
+
             public_key = str(self.keypair.public_key)
             private_key = b58encode(bytes(self.keypair.secret_key)).decode('ascii')
 
@@ -42,6 +45,7 @@ class WalletManager:
 
         except Exception as e:
             logger.error(f"Fehler beim Erstellen der Wallet: {e}")
+            self._active = False
             return "", ""
 
     def load_wallet(self, private_key: str) -> bool:
@@ -50,16 +54,18 @@ class WalletManager:
             logger.info("Versuche Wallet zu laden...")
             secret_key = b58decode(private_key)
             self.keypair = Keypair.from_secret_key(bytes(secret_key))
+            self._active = True
             logger.info(f"Wallet erfolgreich geladen mit Adresse: {str(self.keypair.public_key)[:8]}...")
             return True
         except Exception as e:
             logger.error(f"Fehler beim Laden der Wallet: {e}")
+            self._active = False
             return False
 
     def get_balance(self) -> float:
         """Holt das aktuelle Wallet-Guthaben in SOL"""
         try:
-            if not self.keypair:
+            if not self._active or not self.keypair:
                 logger.warning("get_balance aufgerufen ohne aktive Wallet")
                 return 0.0
 
@@ -91,7 +97,7 @@ class WalletManager:
     def send_sol(self, user_id: str, to_address: str, amount: float) -> tuple[bool, str]:
         """Sendet SOL an eine andere Adresse mit Risiko- und Sicherheitsanalyse"""
         try:
-            if not self.keypair:
+            if not self._active or not self.keypair:
                 return False, "Keine Wallet geladen"
 
             # Berechne Transaktionsgebühren
@@ -133,7 +139,7 @@ class WalletManager:
 
     def get_address(self) -> str:
         """Gibt die Wallet-Adresse zurück"""
-        if not self.keypair:
+        if not self._active or not self.keypair:
             logger.warning("get_address aufgerufen ohne aktive Wallet")
             return ""
 
@@ -144,30 +150,33 @@ class WalletManager:
     def generate_qr_code(self) -> BytesIO:
         """Generiert einen QR-Code für die Wallet-Adresse"""
         try:
-            # Prüfe ob eine Wallet existiert
+            if not self._active:
+                logger.error("Keine aktive Wallet für QR-Code-Generierung")
+                raise ValueError("Keine aktive Wallet")
+
             address = self.get_address()
             if not address:
                 logger.error("Keine Wallet-Adresse verfügbar für QR-Code-Generierung")
                 raise ValueError("Keine Wallet-Adresse verfügbar")
 
-            # Erstelle QR Code
+            # Erstelle QR Code mit spezifischer Konfiguration
             qr = qrcode.QRCode(
                 version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,  # Höhere Fehlerkorrektur
                 box_size=10,
                 border=4,
             )
 
-            # Füge Daten hinzu (Solana-Adresse)
+            # Füge Solana-Adresse mit URI-Schema hinzu
             qr.add_data(f"solana:{address}")
             qr.make(fit=True)
 
-            # Erstelle Bild
+            # Erstelle Bild mit besserer Qualität
             img = qr.make_image(fill_color="black", back_color="white")
 
-            # Speichere in BytesIO
+            # Speichere als PNG mit hoher Qualität
             bio = BytesIO()
-            img.save(bio, format='PNG')
+            img.save(bio, format='PNG', quality=95)
             bio.seek(0)
 
             logger.info(f"QR-Code erfolgreich generiert für Adresse: {address[:8]}...")
