@@ -128,39 +128,52 @@ class TestAutomatedSignalGenerator(unittest.TestCase):
             }
         }
 
-        signal = self.generator._create_signal_from_analysis(
-            current_price=100.0,
-            trend_analysis=weak_trend,
-            support_resistance={'support': 98.0, 'resistance': 102.0}
-        )
+        # Mock der Zeitstempel-Generierung
+        with patch('time.time', return_value=1741471528.241259):
+            signal = self.generator._create_signal_from_analysis(
+                current_price=100.0,
+                trend_analysis=weak_trend,
+                support_resistance={'support': 98.0, 'resistance': 102.0}
+            )
 
-        # Schwaches Signal sollte gefiltert werden
-        self.assertIsNone(signal)
+            # Schwaches Signal sollte gefiltert werden
+            self.assertIsNone(signal)
 
-        # Test mit starkem Signal
-        strong_trend = {
-            'trend': 'aufwärts',
-            'stärke': 0.8,
-            'metriken': {
-                'momentum': 0.7,
-                'volatilität': 0.2,
-                'volumen_trend': 0.5
+            # Test mit starkem Signal
+            strong_trend = {
+                'trend': 'aufwärts',
+                'stärke': 0.8,
+                'metriken': {
+                    'momentum': 0.7,
+                    'volatilität': 0.2,
+                    'volumen_trend': 0.5
+                }
             }
-        }
 
-        signal = self.generator._create_signal_from_analysis(
-            current_price=100.0,
-            trend_analysis=strong_trend,
-            support_resistance={'support': 98.0, 'resistance': 102.0}
-        )
+            signal = self.generator._create_signal_from_analysis(
+                current_price=100.0,
+                trend_analysis=strong_trend,
+                support_resistance={'support': 98.0, 'resistance': 102.0}
+            )
 
-        # Starkes Signal sollte akzeptiert werden
-        self.assertIsNotNone(signal)
-        self.assertIn('signal_quality', signal)
-        self.assertGreater(signal['signal_quality'], 5)
+            # Starkes Signal sollte akzeptiert werden
+            self.assertIsNotNone(signal)
+            self.assertIn('signal_quality', signal)
+            self.assertGreater(signal['signal_quality'], 5)
 
     def test_notification_system(self):
         """Test des Benachrichtigungssystems"""
+        # Mock die Chart-Erstellung
+        self.chart_analyzer.create_prediction_chart.return_value = b"mock_chart_data"
+
+        # Mock für bot.updater.bot.send_photo
+        mock_bot = MagicMock()
+        mock_bot.send_photo = MagicMock()
+
+        self.bot.updater = MagicMock()
+        self.bot.updater.bot = mock_bot
+
+        # Test Signal mit allen erforderlichen Feldern
         test_signal = {
             'pair': 'SOL/USD',
             'direction': 'long',
@@ -169,28 +182,21 @@ class TestAutomatedSignalGenerator(unittest.TestCase):
             'take_profit': 105.0,
             'expected_profit': 5.0,
             'signal_quality': 8.5,
-            'trend_strength': 0.8
+            'trend_strength': 0.8,
+            'timestamp': datetime.now().timestamp()
         }
 
         # Mock die Wallet-Manager-Methode
         self.bot.wallet_manager = MagicMock()
         self.bot.wallet_manager.get_balance.return_value = 10.0
 
-        # Mock die Chart-Erstellung
-        self.chart_analyzer.create_prediction_chart.return_value = b"mock_chart_data"
-
-        # Mock für bot.updater.bot.send_photo
-        self.bot.updater = MagicMock()
-        self.bot.updater.bot = MagicMock()
-        self.bot.updater.bot.send_photo = MagicMock()
-
         self.generator._notify_users_about_signal(test_signal)
 
         # Überprüfe ob Benachrichtigung gesendet wurde
-        self.assertTrue(self.bot.updater.bot.send_photo.called)
+        self.assertTrue(mock_bot.send_photo.called)
 
         # Überprüfe Benachrichtigungsdetails
-        call_args = self.bot.updater.bot.send_photo.call_args
+        call_args = mock_bot.send_photo.call_args
         self.assertIn('chat_id', call_args[1])
         self.assertIn('caption', call_args[1])
         self.assertIn('reply_markup', call_args[1])
