@@ -153,15 +153,15 @@ def start(update: Update, context: CallbackContext):
         logger.info(f"Start-Befehl von User {user_id}")
 
         update.message.reply_text(
-            "🚀 Hey! Willkommen bei Dexter - deinem persönlichen Trading-Assistenten!\n\n"
-            "🤖 Ich bin dein KI-gesteuerter Begleiter in der spannenden Welt des Solana-Tradings.\n\n"
-            "Was ich für dich tun kann:\n"
-            "✨ KI-gestützte Trading-Signale generieren\n"
-            "📊 Marktanalysen in Echtzeit durchführen\n"
-            "⚡ Blitzschnelle Order-Ausführung\n"
-            "🛡️ Professionelles Risikomanagement\n\n"
-            "🎯 Bereit für den ersten Schritt?\n"
-            "Lass uns deine Trading-Wallet erstellen!",
+            "🤖 Yo! Dexter hier - dein autonomer Trading-Mastermind auf Solana!\n\n"
+            "💪 Was mich so besonders macht?\n"
+            "• Ich trade 24/7 vollautomatisch für dich\n"
+            "• Meine KI trifft sekundenschnelle Entscheidungen\n"
+            "• Ich führe die Trades selbstständig aus - keine manuellen Eingaben nötig\n"
+            "• Maximale Performance durch Real-Time Marktanalyse\n\n"
+            "🎯 Meine Mission: Dein Portfolio auf's nächste Level bringen!\n\n"
+            "⚡ Ready für automated Trading?\n"
+            "Erstell dir 'ne Wallet und lass uns loslegen! 🚀",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("💎 Trading-Wallet erstellen", callback_data="create_wallet")]
             ])
@@ -170,7 +170,7 @@ def start(update: Update, context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
-        update.message.reply_text("❌ Ups! Etwas ist schiefgelaufen. Bitte versuche es noch einmal!")
+        update.message.reply_text("❌ Ups! System-Timeout. Hit me up mit /start für'n Neustart! 🔄")
 
 def message_handler(update: Update, context: CallbackContext):
     """Genereller Message Handler"""
