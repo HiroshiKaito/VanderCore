@@ -3,6 +3,9 @@ import os
 import json
 import atexit
 import time
+import threading
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -34,6 +37,31 @@ wallet_manager = None
 user_wallets = {}
 user_private_keys = {}
 
+# Thread Pool für parallele Verarbeitung
+executor = ThreadPoolExecutor(max_workers=10)
+
+# Rate Limiting
+MAX_REQUESTS_PER_SECOND = 30
+request_lock = threading.Lock()
+request_count = 0
+last_reset = time.time()
+
+def rate_limit():
+    """Implementiert einfaches Rate Limiting"""
+    global request_count, last_reset
+
+    with request_lock:
+        current_time = time.time()
+        if current_time - last_reset >= 1:
+            request_count = 0
+            last_reset = current_time
+
+        if request_count >= MAX_REQUESTS_PER_SECOND:
+            return False
+
+        request_count += 1
+        return True
+
 def initialize_bot():
     """Initialisiert den Bot"""
     global updater, dispatcher, wallet_manager
@@ -46,11 +74,15 @@ def initialize_bot():
             logger.error("Kein Telegram Token gefunden!")
             return False
 
-        # Erstelle Updater
+        # Erstelle Updater mit optimierten Einstellungen
         updater = Updater(
             token=config.TELEGRAM_TOKEN,
             use_context=True,
-            request_kwargs={'read_timeout': 60, 'connect_timeout': 60}
+            workers=4,  # Mehrere Worker für parallele Verarbeitung
+            request_kwargs={
+                'read_timeout': 60,
+                'connect_timeout': 60
+            }
         )
         dispatcher = updater.dispatcher
 
@@ -89,14 +121,90 @@ def register_handlers():
         logger.error(f"Fehler beim Registrieren der Handler: {e}")
         raise
 
+def run_flask():
+    """Startet den Flask-Server"""
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        logger.info("Flask Server erfolgreich gestartet")
+    except Exception as e:
+        logger.error(f"Fehler beim Starten des Flask-Servers: {e}")
+        raise
+
+def main():
+    """Hauptfunktion mit verbesserter Fehlerbehandlung"""
+    try:
+        # Initialisiere Bot
+        if not initialize_bot():
+            logger.error("Bot-Initialisierung fehlgeschlagen")
+            sys.exit(1)
+
+        # Starte Flask in separatem Thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        logger.info("Flask-Server Thread gestartet")
+
+        # Warte kurz, damit Flask starten kann
+        time.sleep(2)
+
+        # Prüfe ob Flask läuft
+        if not flask_thread.is_alive():
+            logger.error("Flask-Server konnte nicht gestartet werden")
+            sys.exit(1)
+
+        # Starte Bot mit automatischem Neustart
+        while True:
+            try:
+                logger.info("Starte Bot im Polling-Modus...")
+                updater.start_polling(
+                    drop_pending_updates=True,
+                    timeout=30,
+                    read_latency=2,
+                    allowed_updates=Update.ALL_TYPES
+                )
+                logger.info("Bot-Polling gestartet")
+                updater.idle()
+
+            except NetworkError as e:
+                logger.error(f"Netzwerkfehler: {e}")
+                logger.info("Warte 10 Sekunden vor Neustart...")
+                time.sleep(10)
+
+            except TimedOut as e:
+                logger.error(f"Timeout Error: {e}")
+                logger.info("Warte 5 Sekunden vor Neustart...")
+                time.sleep(5)
+
+            except Exception as e:
+                logger.error(f"Kritischer Fehler: {e}")
+                logger.info("Warte 30 Sekunden vor Neustart...")
+                time.sleep(30)
+
+            finally:
+                try:
+                    updater.stop()
+                except Exception as e:
+                    logger.error(f"Fehler beim Stoppen des Updaters: {e}")
+
+    except KeyboardInterrupt:
+        logger.info("Bot wird durch Benutzer beendet")
+        cleanup()
+    except Exception as e:
+        logger.critical(f"Fataler Fehler: {e}")
+        cleanup()
+        sys.exit(1)
+
 @app.route('/')
 def index():
     """Health Check Endpoint"""
     try:
+        if not rate_limit():
+            return jsonify({'status': 'error', 'message': 'Rate limit exceeded'}), 429
+
         if updater and updater.bot:
             return jsonify({
                 'status': 'healthy',
-                'bot_username': updater.bot.username
+                'bot_username': updater.bot.username,
+                'uptime': 'active'
             })
         return jsonify({'status': 'error', 'message': 'Bot nicht initialisiert'}), 500
     except Exception as e:
@@ -276,51 +384,6 @@ def cleanup():
         logger.error(f"Fehler beim Cleanup: {e}")
 
 atexit.register(cleanup)
-
-def run_bot():
-    """Startet den Bot im Polling-Modus mit automatischem Neustart"""
-    logger.info("Starte Bot im Polling-Modus...")
-    while True:
-        try:
-            updater.start_polling(drop_pending_updates=True)
-            logger.info("Bot-Polling gestartet")
-            updater.idle()
-        except NetworkError as e:
-            logger.error(f"Netzwerkfehler: {e}")
-            logger.info("Warte 10 Sekunden vor Neustart...")
-            time.sleep(10)
-        except TimedOut as e:
-            logger.error(f"Timeout Error: {e}")
-            logger.info("Warte 5 Sekunden vor Neustart...")
-            time.sleep(5)
-        except Exception as e:
-            logger.error(f"Kritischer Fehler: {e}")
-            logger.info("Warte 30 Sekunden vor Neustart...")
-            time.sleep(30)
-        finally:
-            try:
-                updater.stop()
-            except Exception:
-                pass
-
-def main():
-    """Hauptfunktion"""
-    try:
-        # Initialisiere Bot
-        if not initialize_bot():
-            logger.error("Bot-Initialisierung fehlgeschlagen")
-            return
-
-        # Starte Flask Server
-        logger.info("Starte Flask Server auf Port 5000...")
-        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
-
-        # Starte Bot mit automatischem Neustart
-        run_bot()
-
-    except Exception as e:
-        logger.error(f"Kritischer Fehler: {e}")
-        raise
 
 if __name__ == '__main__':
     main()
