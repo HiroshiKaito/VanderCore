@@ -2,7 +2,10 @@
 import logging
 from flask import Flask, request, jsonify
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext, Dispatcher
+from telegram.ext import (
+    Updater, CommandHandler, MessageHandler, Filters, 
+    CallbackContext, Dispatcher, CallbackQueryHandler
+)
 from config import config
 import os
 import json
@@ -30,6 +33,7 @@ app = Flask(__name__)
 # Telegram Bot
 updater = None
 dispatcher = None
+active_users = set()  # Set für aktive Nutzer
 
 def keep_alive():
     """Hält den Replit-Server am Leben"""
@@ -41,6 +45,43 @@ def keep_alive():
         except Exception as e:
             logger.warning(f"Keep-alive ping fehlgeschlagen: {e}")
         sleep(270)  # Ping alle 4.5 Minuten
+
+def button_handler(update: Update, context: CallbackContext):
+    """Handler für Button-Callbacks"""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    try:
+        query.answer()  # Bestätige den Button-Click
+
+        if query.data == "start_signal_search":
+            logger.info(f"Signal-Suche aktiviert von User {user_id}")
+            try:
+                # Füge Benutzer zu aktiven Nutzern hinzu
+                active_users.add(user_id)
+                logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
+
+                # Bestätige die Aktivierung
+                query.message.reply_text(
+                    "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
+                    "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n\n"
+                    "Status: 🟢 Signal Generator aktiv"
+                )
+
+            except Exception as e:
+                logger.error(f"Detaillierter Fehler beim Starten des Signal Generators: {str(e)}")
+                query.message.reply_text(
+                    "❌ Fehler beim Aktivieren der Signal-Suche.\n"
+                    "Bitte versuchen Sie es später erneut."
+                )
+
+    except Exception as e:
+        logger.error(f"Fehler im Button Handler: {str(e)}")
+        query.message.reply_text(
+            "❌ Es ist ein Fehler aufgetreten.\n"
+            f"Details: {str(e)}\n"
+            "Bitte versuchen Sie es erneut."
+        )
 
 def start(update: Update, context: CallbackContext):
     """Handler für den /start Befehl"""
@@ -100,6 +141,9 @@ def initialize_bot():
 
         # Registriere Handler
         dispatcher.add_handler(CommandHandler("start", start))
+
+        # Button Handler
+        dispatcher.add_handler(CallbackQueryHandler(button_handler))
 
         logger.info("Bot erfolgreich initialisiert")
         return True
