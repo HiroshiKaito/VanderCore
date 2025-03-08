@@ -31,12 +31,24 @@ logger = logging.getLogger(__name__)
 # Flask App für Webhook
 app = Flask(__name__)
 
+# Konfiguriere Flask
+app.config['JSON_AS_ASCII'] = False
+app.config['PROPAGATE_EXCEPTIONS'] = True
+
+# Initialisiere Bot beim Import
+try:
+    from telegram import Bot
+    bot = Bot(token=config.TELEGRAM_TOKEN)
+    dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
+    wallet_manager = WalletManager(config.SOLANA_RPC_URL)
+    logger.info("Bot und Dispatcher erfolgreich initialisiert")
+except Exception as e:
+    logger.error(f"Fehler bei der Bot-Initialisierung: {e}")
+    raise
+
 # Globale Variablen
-bot = None
-dispatcher = None
-wallet_manager = None
-user_wallets = {}
-user_private_keys = {}
+#user_wallets = {} #moved to load_user_wallets()
+#user_private_keys = {} #moved to load_user_wallets()
 
 class WebhookManager:
     def __init__(self):
@@ -192,45 +204,6 @@ class WebhookManager:
 
 webhook_manager = WebhookManager()
 
-def initialize_bot():
-    """Initialisiert den Bot"""
-    global bot, dispatcher, wallet_manager
-
-    try:
-        logger.info("Starte Bot-Initialisierung...")
-
-        if not config.TELEGRAM_TOKEN:
-            logger.error("Kein Telegram Token gefunden!")
-            return False
-
-        from telegram import Bot
-        bot = Bot(token=config.TELEGRAM_TOKEN)
-
-        # Erstelle Dispatcher mit optimierten Einstellungen
-        dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
-
-        # Teste Bot-Verbindung
-        bot_info = bot.get_me()
-        logger.info(f"Bot verbunden als: {bot_info.username}")
-
-        # Initialisiere Wallet Manager
-        wallet_manager = WalletManager(config.SOLANA_RPC_URL)
-        logger.info("Wallet Manager initialisiert")
-
-        # Lade bestehende Wallets
-        load_user_wallets()
-        logger.info("Wallet-Daten geladen")
-
-        # Registriere Handler
-        register_handlers()
-        logger.info("Handler registriert")
-
-        return True
-
-    except Exception as e:
-        logger.error(f"Fehler bei Bot-Initialisierung: {e}")
-        return False
-
 @app.route('/' + config.TELEGRAM_TOKEN, methods=['POST'])
 def webhook():
     """Verarbeitet eingehende Webhook-Anfragen"""
@@ -258,10 +231,6 @@ def health_check():
             'last_check': webhook_manager.last_check,
             'connectivity': webhook_manager.check_connectivity()
         }
-
-        if not webhook_manager.active:
-            webhook_manager.setup_webhook()
-            status['recovery'] = 'initiated'
 
         return jsonify(status)
 
@@ -294,6 +263,8 @@ def load_user_wallets():
             logger.info("Wallet-Daten geladen")
     except Exception as e:
         logger.error(f"Fehler beim Laden der Wallet-Daten: {e}")
+load_user_wallets()
+
 
 def start(update: Update, context: CallbackContext):
     """Handler für den /start Befehl"""
@@ -461,11 +432,6 @@ def register_handlers():
 def main():
     """Hauptfunktion"""
     try:
-        # Initialisiere Bot
-        if not initialize_bot():
-            logger.error("Bot-Initialisierung fehlgeschlagen")
-            return
-
         # Starte Webhook-Monitor in separatem Thread
         monitor_thread = threading.Thread(target=webhook_manager.monitor, daemon=True)
         monitor_thread.start()

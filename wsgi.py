@@ -1,4 +1,6 @@
 import logging
+from flask import Flask, jsonify
+import nltk
 from webhook_bot import app
 
 # Configure logging
@@ -12,7 +14,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Die Flask-App wurde bereits in webhook_bot.py initialisiert und wird hier importiert
+# Download required NLTK data
+try:
+    logger.info("Downloading required NLTK data...")
+    nltk.download(['punkt', 'averaged_perceptron_tagger', 'vader_lexicon'])
+    logger.info("NLTK data download completed")
+except Exception as e:
+    logger.error(f"Failed to download NLTK data: {e}")
+
+# Root route to confirm server is running
+@app.route('/')
+def root():
+    return jsonify({
+        'status': 'running',
+        'message': 'Solana Trading Bot Server is running'
+    })
 
 if __name__ == "__main__":
     # This is used when running locally

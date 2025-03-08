@@ -27,6 +27,7 @@ class Config:
 
             try:
                 self.ADMIN_USER_ID = int(admin_id)
+                logger.info(f"Admin ID konfiguriert: {self.ADMIN_USER_ID}")
             except ValueError:
                 logger.error(f"Ungültige ADMIN_USER_ID: {admin_id}")
                 raise ValueError("ADMIN_USER_ID muss eine gültige Zahl sein")
@@ -47,10 +48,11 @@ class Config:
         if not self.TELEGRAM_TOKEN:
             raise ValueError("TELEGRAM_TOKEN nicht gesetzt")
 
-        # Admin ID ist optional
-        if self.ADMIN_USER_ID != 0:
-            if not isinstance(self.ADMIN_USER_ID, int):
-                raise ValueError("ADMIN_USER_ID muss eine Zahl sein")
+        if not self.ADMIN_USER_ID:
+            raise ValueError("ADMIN_USER_ID nicht gesetzt")
+
+        if not isinstance(self.ADMIN_USER_ID, int):
+            raise ValueError("ADMIN_USER_ID muss eine Zahl sein")
 
         if self.TELEGRAM_TOKEN and len(self.TELEGRAM_TOKEN) < 30:
             raise ValueError("TELEGRAM_TOKEN scheint ungültig zu sein (zu kurz)")
@@ -60,5 +62,4 @@ try:
     config = Config()
 except Exception as e:
     logger.critical(f"Kritischer Fehler beim Erstellen der Konfiguration: {e}")
-    # Don't raise here, let the bot handle missing configuration
     config = None
