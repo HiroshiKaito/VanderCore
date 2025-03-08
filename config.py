@@ -46,16 +46,16 @@ class Config:
     def validate_config(self):
         """Validate the configuration values"""
         if not self.TELEGRAM_TOKEN:
-            raise ValueError("TELEGRAM_TOKEN nicht gesetzt")
-
+            logger.warning("TELEGRAM_TOKEN nicht gesetzt - wird zur Laufzeit benötigt")
+            
         if not self.ADMIN_USER_ID:
-            raise ValueError("ADMIN_USER_ID nicht gesetzt")
-
+            logger.warning("ADMIN_USER_ID nicht gesetzt - wird zur Laufzeit benötigt")
+            
         if not isinstance(self.ADMIN_USER_ID, int):
             raise ValueError("ADMIN_USER_ID muss eine Zahl sein")
 
-        if self.TELEGRAM_TOKEN and len(self.TELEGRAM_TOKEN) < 30:
-            raise ValueError("TELEGRAM_TOKEN scheint ungültig zu sein (zu kurz)")
+        if self.TELEGRAM_TOKEN and len(self.TELEGRAM_TOKEN) < 20:
+            logger.warning("TELEGRAM_TOKEN scheint zu kurz zu sein - prüfen Sie den Wert")
 
 # Create a global instance
 try:

@@ -29,7 +29,8 @@ app = Flask(__name__)
 from webhook_bot import setup_bot, get_bot_info
 
 # Initialize bot
-setup_bot()
+if not setup_bot():
+    logger.critical("Bot-Initialisierung fehlgeschlagen. Überprüfen Sie die Umgebungsvariablen.")
 
 @app.route('/')
 def root():
