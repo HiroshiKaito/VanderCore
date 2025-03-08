@@ -13,6 +13,7 @@ from telegram.ext import (
 )
 from config import config
 from wallet_manager import WalletManager
+import random  # Für Demo-Signale
 
 # Logging-Konfiguration
 logging.basicConfig(
@@ -31,6 +32,8 @@ dispatcher = None
 active_users = set()
 wallet_manager = None
 user_wallets = {}
+signal_thread = None
+signal_generator_running = False
 
 # Flask App
 app = Flask(__name__)
@@ -54,6 +57,106 @@ def load_user_wallets():
             logger.info("User-Wallet-Zuordnung geladen")
     except Exception as e:
         logger.error(f"Fehler beim Laden der User-Wallet-Zuordnung: {e}")
+
+def generate_demo_signal():
+    """Generiert ein Demo-Trading-Signal"""
+    pairs = ["SOL/USDC", "SOL/USDT", "RAY/SOL", "SRM/SOL"]
+    directions = ["LONG", "SHORT"]
+    pair = random.choice(pairs)
+    direction = random.choice(directions)
+    current_price = round(random.uniform(20, 100), 2)
+
+    if direction == "LONG":
+        entry = current_price
+        stop_loss = round(entry * 0.95, 2)  # 5% unter Entry
+        take_profit = round(entry * 1.15, 2)  # 15% über Entry
+    else:
+        entry = current_price
+        stop_loss = round(entry * 1.05, 2)  # 5% über Entry
+        take_profit = round(entry * 0.85, 2)  # 15% unter Entry
+
+    return {
+        "pair": pair,
+        "direction": direction,
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "potential_profit": "15%",
+        "confidence": "85%"
+    }
+
+def send_signal_to_users(signal):
+    """Sendet ein Trading-Signal an alle aktiven User"""
+    global updater
+
+    signal_message = (
+        f"🎯 Neues Trading Signal\n\n"
+        f"Trading Pair: {signal['pair']}\n"
+        f"{'📈' if signal['direction'] == 'LONG' else '📉'} {signal['direction']}\n\n"
+        f"🎯 Entry: {signal['entry']} USDC\n"
+        f"🛑 Stop Loss: {signal['stop_loss']} USDC\n"
+        f"✨ Take Profit: {signal['take_profit']} USDC\n\n"
+        f"💰 Potentieller Profit: {signal['potential_profit']}\n"
+        f"🎯 Signal Konfidenz: {signal['confidence']}\n\n"
+        f"Verfügbare Befehle:\n"
+        f"/wallet - Wallet-Status anzeigen\n"
+        f"/stop_signals - Signalsuche beenden"
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Trade ausführen", callback_data="execute_trade"),
+            InlineKeyboardButton("❌ Ignorieren", callback_data="ignore_trade")
+        ]
+    ]
+
+    for user_id in active_users:
+        try:
+            updater.bot.send_message(
+                chat_id=user_id,
+                text=signal_message,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            logger.info(f"Signal an User {user_id} gesendet")
+        except Exception as e:
+            logger.error(f"Fehler beim Senden des Signals an User {user_id}: {e}")
+
+def signal_generator_thread():
+    """Thread-Funktion für die Signal-Generierung"""
+    global signal_generator_running
+    logger.info("Signal Generator Thread gestartet")
+
+    while signal_generator_running:
+        try:
+            if active_users:  # Nur Signale generieren wenn es aktive User gibt
+                signal = generate_demo_signal()
+                send_signal_to_users(signal)
+                logger.info("Neues Signal generiert und gesendet")
+
+            # Warte 1-3 Minuten bis zum nächsten Signal
+            sleep_time = random.randint(60, 180)
+            sleep(sleep_time)
+
+        except Exception as e:
+            logger.error(f"Fehler im Signal Generator Thread: {e}")
+            sleep(30)  # Bei Fehler 30 Sekunden warten
+
+def start_signal_generator():
+    """Startet den Signal Generator Thread"""
+    global signal_thread, signal_generator_running
+
+    if not signal_generator_running:
+        signal_generator_running = True
+        signal_thread = threading.Thread(target=signal_generator_thread, daemon=True)
+        signal_thread.start()
+        logger.info("Signal Generator Thread gestartet")
+
+def stop_signal_generator():
+    """Stoppt den Signal Generator Thread"""
+    global signal_generator_running
+    signal_generator_running = False
+    logger.info("Signal Generator wird gestoppt")
+
 
 def button_handler(update: Update, context: CallbackContext):
     """Handler für Button-Callbacks"""
@@ -135,9 +238,12 @@ def button_handler(update: Update, context: CallbackContext):
                     )
                     return
 
-                # Füge Benutzer zu aktiven Nutzern hinzu
+                # Füge User zu aktiven Nutzern hinzu
                 active_users.add(user_id)
-                logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
+
+                # Starte Signal Generator wenn noch nicht aktiv
+                if not signal_generator_running:
+                    start_signal_generator()
 
                 # Bestätige die Aktivierung
                 query.message.reply_text(
@@ -155,21 +261,27 @@ def button_handler(update: Update, context: CallbackContext):
 
             except Exception as e:
                 logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
-                query.message.reply_text(
-                    "⚠️ Fehler. Starte neu mit /start\n\n"
-                    "Verfügbare Befehle:\n"
-                    "/wallet - Wallet-Status anzeigen\n"
-                    "/stop_signals - Signalsuche beenden"
-                )
+                query.message.reply_text("⚠️ Fehler. Starte neu mit /start")
+
+        elif query.data == "execute_trade":
+            query.message.reply_text(
+                "✅ Trade wird ausgeführt...\n\n"
+                "Verfügbare Befehle:\n"
+                "/wallet - Wallet-Status anzeigen\n"
+                "/stop_signals - Signalsuche beenden"
+            )
+
+        elif query.data == "ignore_trade":
+            query.message.reply_text(
+                "❌ Trade ignoriert\n\n"
+                "Verfügbare Befehle:\n"
+                "/wallet - Wallet-Status anzeigen\n"
+                "/stop_signals - Signalsuche beenden"
+            )
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {str(e)}")
-        query.message.reply_text(
-            "⚠️ Verbindungsfehler. Starte neu mit /start\n\n"
-            "Verfügbare Befehle:\n"
-            "/wallet - Wallet-Status anzeigen\n"
-            "/stop_signals - Signalsuche beenden"
-        )
+        query.message.reply_text("⚠️ Verbindungsfehler. Starte neu mit /start")
 
 def start(update: Update, context: CallbackContext):
     """Handler für den /start Befehl"""
@@ -221,6 +333,7 @@ def stop_signals(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     if user_id in active_users:
         active_users.remove(user_id)
+        stop_signal_generator() #Stop signal generator when user stops signals
         update.message.reply_text(
             "🔴 Signalsuche deaktiviert.\n"
             "Du erhältst keine weiteren Trading-Signale.\n\n"
@@ -307,6 +420,9 @@ def main():
         updater.start_polling(drop_pending_updates=True)
         logger.info("Bot läuft im Polling-Modus")
 
+        # Starte Signal Generator
+        start_signal_generator()
+
         # Warte auf Beenden
         updater.idle()
 
@@ -314,8 +430,12 @@ def main():
         logger.error(f"Kritischer Fehler: {e}")
         sys.exit(1)
 
-# Registriere save_user_wallets für automatisches Speichern beim Beenden
-atexit.register(save_user_wallets)
+# Cleanup beim Beenden
+def cleanup():
+    save_user_wallets()
+    stop_signal_generator()
+
+atexit.register(cleanup)
 
 if __name__ == '__main__':
     try:
