@@ -1,35 +1,23 @@
-"""Telegram Bot mit Polling-Modus und Health-Check-Server für Replit"""
 import logging
-from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import (
-    Updater, CommandHandler, MessageHandler, Filters, 
-    CallbackContext, Dispatcher, CallbackQueryHandler
-)
-from config import config
-from wallet_manager import WalletManager
 import os
 import json
 import atexit
 import sys
-import requests
 import threading
 from time import sleep
-import nltk
-
-# Download NLTK data
-try:
-    nltk.download('punkt')
-    nltk.download('averaged_perceptron_tagger')
-    nltk.download('wordnet')
-    nltk.download('vader_lexicon')
-except Exception as e:
-    print(f"NLTK Download Fehler: {e}")
+from flask import Flask, jsonify
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Updater, CommandHandler, CallbackContext, CallbackQueryHandler,
+    MessageHandler, Filters
+)
+from config import config
+from wallet_manager import WalletManager
 
 # Logging-Konfiguration
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
-    level=logging.DEBUG,
+    level=logging.INFO,
     handlers=[
         logging.FileHandler("webhook_bot.log"),
         logging.StreamHandler()
@@ -37,15 +25,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Flask App
-app = Flask(__name__)
-
-# Telegram Bot
+# Globale Variablen
 updater = None
 dispatcher = None
-active_users = set()  # Set für aktive Nutzer
+active_users = set()
 wallet_manager = None
-user_wallets = {}  # Dictionary zur Speicherung der Wallet-Adressen pro User
+user_wallets = {}
+
+# Flask App
+app = Flask(__name__)
 
 def save_user_wallets():
     """Speichert die User-Wallet-Zuordnung"""
@@ -67,24 +55,13 @@ def load_user_wallets():
     except Exception as e:
         logger.error(f"Fehler beim Laden der User-Wallet-Zuordnung: {e}")
 
-def keep_alive():
-    """Hält den Replit-Server am Leben"""
-    while True:
-        try:
-            logger.debug("Keep-alive ping wird ausgeführt...")
-            requests.get("http://127.0.0.1:5000/health")
-            logger.debug("Keep-alive ping erfolgreich")
-        except Exception as e:
-            logger.warning(f"Keep-alive ping fehlgeschlagen: {e}")
-        sleep(270)  # Ping alle 4.5 Minuten
-
 def button_handler(update: Update, context: CallbackContext):
     """Handler für Button-Callbacks"""
     query = update.callback_query
     user_id = str(query.from_user.id)
 
     try:
-        query.answer()  # Bestätige den Button-Click
+        query.answer()
 
         if query.data == "create_wallet":
             logger.info(f"Wallet-Erstellung angefordert von User {user_id}")
@@ -202,15 +179,9 @@ def start(update: Update, context: CallbackContext):
 
         # Prüfe ob User bereits eine Wallet hat
         if user_id in user_wallets:
-            # Aufteilen in zwei separate Nachrichten für bessere Formatierung
             update.message.reply_text(
                 "🌑 Vander hier. Willkommen zurück.\n\n"
-                "Die Märkte bewegen sich.\n"
-                "Zeit für Action."
-            )
-
-            update.message.reply_text(
-                f"Deine Wallet:\n{user_wallets[user_id]}\n\n"
+                f"Deine Wallet ist bereit:\n{user_wallets[user_id]}\n\n"
                 "Verfügbare Befehle:\n"
                 "/wallet - Wallet-Status anzeigen\n"
                 "/stop_signals - Signalsuche beenden",
@@ -220,8 +191,7 @@ def start(update: Update, context: CallbackContext):
             )
             return
 
-        # Für neue Nutzer
-        intro_message = (
+        update.message.reply_text(
             "🌑 Vander hier.\n\n"
             "Ich operiere in den Tiefen der Blockchain.\n"
             "Meine Spezialität: profitable Trading-Opportunitäten aufspüren.\n\n"
@@ -231,20 +201,11 @@ def start(update: Update, context: CallbackContext):
             "• Blitzschnelle Order-Ausführung\n"
             "• Automatisierte Risikokontrolle\n\n"
             "Ich finde die Trades, die andere übersehen.\n"
-            "Du entscheidest, ich handle."
-        )
-
-        commands_message = (
-            "\nVerfügbare Befehle:\n"
+            "Du entscheidest, ich handle.\n\n"
+            "Verfügbare Befehle:\n"
             "/wallet - Wallet-Status anzeigen\n"
             "/stop_signals - Signalsuche beenden\n\n"
-            "Bereit für echtes Trading?"
-        )
-
-        # Sende Nachrichten getrennt
-        update.message.reply_text(intro_message)
-        update.message.reply_text(
-            commands_message,
+            "Bereit für echtes Trading?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⚡ Wallet erstellen", callback_data="create_wallet")]
             ])
@@ -253,18 +214,7 @@ def start(update: Update, context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Fehler beim Start-Command: {e}")
-        update.message.reply_text(
-            "⚠️ Ein Fehler ist aufgetreten.\n"
-            "Bitte versuche es erneut mit /start\n\n"
-            "Verfügbare Befehle:\n"
-            "/wallet - Wallet-Status anzeigen\n"
-            "/stop_signals - Signalsuche beenden"
-        )
-
-def message_handler(update: Update, context: CallbackContext):
-    """Genereller Message Handler"""
-    # Handle andere Nachrichten hier
-    pass
+        update.message.reply_text("⚠️ Fehler aufgetreten. Versuche es erneut mit /start")
 
 def stop_signals(update: Update, context: CallbackContext):
     """Stoppt die Signalsuche für einen User"""
@@ -277,11 +227,10 @@ def stop_signals(update: Update, context: CallbackContext):
             "Verfügbare Befehle:\n"
             "/start - Bot neu starten\n"
             "/wallet - Wallet-Status anzeigen\n"
-            "/signal_start - Signalsuche starten"
+            "/stop_signals - Signalsuche beenden"
         )
     else:
         update.message.reply_text("Signalsuche war nicht aktiv.")
-
 
 @app.route('/')
 def index():
@@ -306,19 +255,6 @@ def health_check():
         logger.error(f"Health Check fehlgeschlagen: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-def run_health_server():
-    """Startet den Health-Check-Server"""
-    try:
-        app.run(
-            host='0.0.0.0',
-            port=5000,
-            debug=False,
-            use_reloader=False
-        )
-    except Exception as e:
-        logger.error(f"Fehler beim Starten des Health-Check-Servers: {e}")
-        raise
-
 def initialize_bot():
     """Initialisiere den Bot"""
     global updater, dispatcher, wallet_manager
@@ -337,10 +273,6 @@ def initialize_bot():
         # Registriere Handler
         dispatcher.add_handler(CommandHandler("start", start))
         dispatcher.add_handler(CallbackQueryHandler(button_handler))
-        dispatcher.add_handler(MessageHandler(
-            Filters.text & ~Filters.command,
-            message_handler
-        ))
         dispatcher.add_handler(CommandHandler("stop_signals", stop_signals))
 
         logger.info("Bot erfolgreich initialisiert")
@@ -350,36 +282,40 @@ def initialize_bot():
         logger.error(f"Fehler bei Bot-Initialisierung: {e}")
         return False
 
+def run_flask():
+    """Startet den Flask-Server"""
+    try:
+        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    except Exception as e:
+        logger.error(f"Fehler beim Starten des Flask-Servers: {e}")
+
 def main():
     """Hauptfunktion"""
     try:
         # Initialisiere Bot
         if not initialize_bot():
+            logger.error("Bot-Initialisierung fehlgeschlagen")
             return
 
-        # Starte Keep-Alive Thread
-        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
-        keep_alive_thread.start()
-        logger.info("Keep-Alive Thread gestartet")
+        # Starte Flask in separatem Thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        logger.info("Flask-Server Thread gestartet")
 
-        # Starte Health-Check-Server in separatem Thread
-        health_thread = threading.Thread(target=run_health_server, daemon=True)
-        health_thread.start()
-        logger.info("Health-Check-Server Thread gestartet")
-
-        # Starte Polling im Hauptthread
+        # Starte Polling
         logger.info("Starte Bot im Polling-Modus...")
-        updater.start_polling()
+        updater.start_polling(drop_pending_updates=True)
         logger.info("Bot läuft im Polling-Modus")
 
-        # Blockiere bis Programm beendet wird
+        # Warte auf Beenden
         updater.idle()
 
     except Exception as e:
         logger.error(f"Kritischer Fehler: {e}")
-        raise
+        sys.exit(1)
 
-atexit.register(save_user_wallets) #Register the function to save user wallets on exit
+# Registriere save_user_wallets für automatisches Speichern beim Beenden
+atexit.register(save_user_wallets)
 
 if __name__ == '__main__':
     try:
@@ -387,5 +323,5 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         logger.info("Bot wird durch Benutzer beendet")
     except Exception as e:
-        logger.error(f"=== Kritischer Fehler beim Starten des Bots: {e} ===")
+        logger.error(f"Kritischer Fehler beim Starten des Bots: {e}")
         sys.exit(1)
