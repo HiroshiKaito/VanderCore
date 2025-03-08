@@ -319,7 +319,76 @@ def button_handler(update: Update, context: CallbackContext):
     try:
         query.answer()
 
-        if query.data.startswith("execute_trade_"):
+        if query.data == "show_qr":
+            try:
+                # Stelle sicher, dass die Wallet geladen ist
+                if user_id in user_private_keys:
+                    wallet_manager.load_wallet(user_private_keys[user_id])
+
+                # Generiere QR-Code
+                qr_buffer = wallet_manager.generate_qr_code()
+                query.message.reply_photo(
+                    photo=qr_buffer,
+                    caption="🎯 Scanne den Code zum Einzahlen!\n\n"
+                           "Sobald dein Guthaben eingeht, gebe ich dir sofort Bescheid! 🚀\n"
+                           "Dann können wir direkt mit dem Trading loslegen!"
+                )
+
+                # Starte Guthaben-Check im Hintergrund
+                context.job_queue.run_repeating(
+                    check_balance_callback,
+                    interval=30,
+                    context={'user_id': user_id},
+                    name=f'balance_check_{user_id}'
+                )
+
+            except Exception as e:
+                logger.error(f"Fehler bei QR-Code Generierung: {e}")
+                query.message.reply_text("❌ Konnte QR-Code nicht erstellen. Versuche es später erneut!")
+
+        elif query.data == "show_address":
+            address = wallet_manager.get_address()
+            query.message.reply_text(
+                "📋 Hier ist deine Wallet-Adresse:\n\n"
+                f"`{address}`\n\n"
+                "Kopiere sie und lass uns den Tank füllen! 💫\n\n"
+                "Ich gebe dir sofort Bescheid, sobald das Guthaben da ist! 🚀",
+                parse_mode='Markdown'
+            )
+
+            # Starte Guthaben-Check im Hintergrund
+            context.job_queue.run_repeating(
+                check_balance_callback,
+                interval=30,
+                context={'user_id': user_id},
+                name=f'balance_check_{user_id}'
+            )
+
+        elif query.data == "send_sol":
+            query.message.reply_text(
+                "💫 SOL senden - wie möchtest du die Empfänger-Adresse eingeben?",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📱 QR-Code scannen", callback_data="scan_qr")],
+                    [InlineKeyboardButton("⌨️ Adresse eingeben", callback_data="enter_address")]
+                ])
+            )
+
+        elif query.data == "start_trading":
+            query.message.reply_text(
+                "🎯 Yeah! Lass uns durchstarten!\n\n"
+                "Ich aktiviere jetzt die Trading-Signale für dich.\n"
+                "Sobald ich profitable Gelegenheiten entdecke,\n"
+                "informiere ich dich sofort! 🚀\n\n"
+                "Verfügbare Befehle:\n"
+                "/wallet - Wallet-Status anzeigen\n"
+                "/stop_signals - Signalsuche beenden"
+            )
+            # Starte Signal-Suche
+            active_users.add(user_id)
+            if not signal_generator_running:
+                start_signal_generator()
+
+        elif query.data.startswith("execute_trade_"):
             entry_price = float(query.data.split("_")[1])
 
             # Prüfe Wallet-Guthaben
@@ -440,32 +509,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.message.reply_text(
                 "👊 Verstanden, Boss! Dieser Trade ist nicht dein Style.\n"
                 "Ich halte die Augen offen nach noch besseren Gelegenheiten! 🔍"
-            )
-
-        elif query.data == "show_qr":
-            try:
-                # Stelle sicher, dass die Wallet geladen ist
-                if user_id in user_private_keys:
-                    wallet_manager.load_wallet(user_private_keys[user_id])
-
-                # Generiere QR-Code
-                qr_buffer = wallet_manager.generate_qr_code()
-                query.message.reply_photo(
-                    photo=qr_buffer,
-                    caption="🎯 Scanne den Code zum Einzahlen!\n\n"
-                           "Sobald dein Guthaben da ist, geben wir Vollgas! 🚀"
-                )
-            except Exception as e:
-                logger.error(f"Fehler bei QR-Code Generierung: {e}")
-                query.message.reply_text("❌ Konnte QR-Code nicht erstellen. Versuche es später erneut!")
-
-        elif query.data == "show_address":
-            address = wallet_manager.get_address()
-            query.message.reply_text(
-                "📋 Hier ist deine Wallet-Adresse:\n\n"
-                f"`{address}`\n\n"
-                "Kopiere sie und lass uns den Tank füllen! 💫",
-                parse_mode='Markdown'
             )
 
         elif query.data == "send_sol":
@@ -635,6 +678,50 @@ def cleanup():
     stop_signal_generator()
 
 atexit.register(cleanup)
+
+def check_balance_callback(context: CallbackContext):
+    """Callback für die Überprüfung des Wallet-Guthabens"""
+    job = context.job
+    user_id = job.context['user_id']
+
+    try:
+        # Lade Wallet
+        if user_id in user_private_keys:
+            wallet_manager.load_wallet(user_private_keys[user_id])
+
+        # Prüfe Guthaben
+        balance = wallet_manager.get_balance()
+
+        if balance > 0:
+            # Stoppe den Job
+            job.schedule_removal()
+
+            # Sende Benachrichtigung
+            context.bot.send_message(
+                chat_id=user_id,
+                text=(
+                    "🎉 BOOM! Dein Guthaben ist da!\n\n"
+                    f"💰 Aktuelles Guthaben: {balance:.4f} SOL\n\n"
+                    "Ready für profitable Trades? 🎯"
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🚀 Let's go!", callback_data="start_trading")]
+                ])
+            )
+
+    except Exception as e:
+        logger.error(f"Fehler beim Balance-Check: {e}")
+        job.schedule_removal()
+
+def send_sol_success(update: Update, amount: float, to_address: str):
+    """Sendet eine Erfolgsmeldung nach SOL-Überweisung"""
+    update.message.reply_text(
+        "✨ SOL erfolgreich gesendet!\n\n"
+        f"💫 Betrag: {amount:.4f} SOL\n"
+        f"📍 An: {to_address[:8]}...{to_address[-8:]}\n\n"
+        "Dein Transfer wurde erfolgreich ausgeführt! 🎯"
+    )
+
 
 if __name__ == '__main__':
     try:
