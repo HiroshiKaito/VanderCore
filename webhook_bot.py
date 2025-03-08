@@ -2,13 +2,14 @@ import logging
 import os
 import json
 import atexit
+import time
 from flask import Flask, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, CallbackContext, CallbackQueryHandler,
     MessageHandler, Filters
 )
-from telegram.error import TelegramError
+from telegram.error import TelegramError, NetworkError, TimedOut
 from config import config
 from wallet_manager import WalletManager
 
@@ -276,6 +277,32 @@ def cleanup():
 
 atexit.register(cleanup)
 
+def run_bot():
+    """Startet den Bot im Polling-Modus mit automatischem Neustart"""
+    logger.info("Starte Bot im Polling-Modus...")
+    while True:
+        try:
+            updater.start_polling(drop_pending_updates=True)
+            logger.info("Bot-Polling gestartet")
+            updater.idle()
+        except NetworkError as e:
+            logger.error(f"Netzwerkfehler: {e}")
+            logger.info("Warte 10 Sekunden vor Neustart...")
+            time.sleep(10)
+        except TimedOut as e:
+            logger.error(f"Timeout Error: {e}")
+            logger.info("Warte 5 Sekunden vor Neustart...")
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"Kritischer Fehler: {e}")
+            logger.info("Warte 30 Sekunden vor Neustart...")
+            time.sleep(30)
+        finally:
+            try:
+                updater.stop()
+            except Exception:
+                pass
+
 def main():
     """Hauptfunktion"""
     try:
@@ -288,10 +315,8 @@ def main():
         logger.info("Starte Flask Server auf Port 5000...")
         app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
-        # Starte Bot Polling
-        logger.info("Starte Bot...")
-        updater.start_polling()
-        updater.idle()
+        # Starte Bot mit automatischem Neustart
+        run_bot()
 
     except Exception as e:
         logger.error(f"Kritischer Fehler: {e}")
