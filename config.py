@@ -21,9 +21,14 @@ class Config:
     def __init__(self):
         """Initialize configuration with environment variables"""
         try:
-            # Load Telegram configuration
+            # Load Telegram configuration with better error handling
             self.TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
+            if not self.TELEGRAM_TOKEN:
+                logger.error("TELEGRAM_TOKEN nicht gefunden in Umgebungsvariablen")
+                logger.debug(f"Verfügbare Umgebungsvariablen: {', '.join(list(os.environ.keys()))}")
+            
             admin_id = os.environ.get('ADMIN_USER_ID', '0')
+            logger.debug(f"Geladene ADMIN_USER_ID: {admin_id}")
 
             try:
                 self.ADMIN_USER_ID = int(admin_id)
@@ -31,6 +36,13 @@ class Config:
             except ValueError:
                 logger.error(f"Ungültige ADMIN_USER_ID: {admin_id}")
                 raise ValueError("ADMIN_USER_ID muss eine gültige Zahl sein")
+                
+            # Load session secret
+            self.SESSION_SECRET = os.environ.get('SESSION_SECRET')
+            if not self.SESSION_SECRET:
+                logger.warning("SESSION_SECRET nicht gefunden, generiere zufälligen Wert")
+                import secrets
+                self.SESSION_SECRET = secrets.token_hex(16)
 
             # Load Solana configuration
             self.SOLANA_NETWORK = os.environ.get('SOLANA_NETWORK', self.SOLANA_NETWORK)

@@ -1,3 +1,4 @@
+
 import logging
 import os
 from flask import Flask, jsonify
@@ -20,6 +21,7 @@ from webhook_bot import app, setup_bot, get_bot_info
 if not setup_bot():
     logger.critical("Bot-Initialisierung fehlgeschlagen. Überprüfen Sie die Umgebungsvariablen.")
 
+# Make sure the root route is defined
 @app.route('/')
 def root():
     """Root route to confirm server is running"""
