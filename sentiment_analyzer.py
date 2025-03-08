@@ -25,10 +25,17 @@ class SentimentAnalyzer:
             logger.error(f"Fehler beim Laden von VADER: {e}")
             self.vader = None
 
-        # API Endpoints
+        # API Endpoints mit Backup-URLs
         self.coingecko_api = "https://api.coingecko.com/api/v3"
         self.dex_screener_api = "https://api.dexscreener.com/latest/dex"
-        self.nitter_api = "https://nitter.net/search"
+
+        # Nitter Instanzen für Failover
+        self.nitter_instances = [
+            "https://nitter.net",
+            "https://nitter.cz",
+            "https://nitter.ca",
+            "https://nitter.it"
+        ]
 
         # API Konfiguration
         self.headers = {
@@ -230,14 +237,7 @@ class SentimentAnalyzer:
     async def _fetch_social_data(self) -> str:
         """Holt Social Media Daten mit Fallback-Mechanismen"""
         try:
-            # Liste von Nitter Instanzen
-            nitter_instances = [
-                "https://nitter.net",
-                "https://nitter.cz",
-                "https://nitter.ca"
-            ]
-
-            for instance in nitter_instances:
+            for instance in self.nitter_instances:
                 response = await self._fetch_with_retry(
                     f"{instance}/search",
                     params={

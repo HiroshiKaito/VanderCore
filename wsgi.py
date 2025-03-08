@@ -1,12 +1,12 @@
 import logging
 from flask import Flask, jsonify
 import nltk
-from webhook_bot import app
+from config import config
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,  # Temporär auf DEBUG für bessere Fehleranalyse
     handlers=[
         logging.FileHandler("webhook_bot.log"),
         logging.StreamHandler()
@@ -22,14 +22,31 @@ try:
 except Exception as e:
     logger.error(f"Failed to download NLTK data: {e}")
 
-# Root route to confirm server is running
+# Initialize Flask app
+app = Flask(__name__)
+
+# Import bot after Flask initialization to avoid circular imports
+from webhook_bot import setup_bot, get_bot_info
+
+# Initialize bot
+setup_bot()
+
 @app.route('/')
 def root():
-    return jsonify({
-        'status': 'running',
-        'message': 'Solana Trading Bot Server is running'
-    })
+    """Root route to confirm server is running"""
+    try:
+        bot_info = get_bot_info()
+        return jsonify({
+            'status': 'running',
+            'message': 'Solana Trading Bot Server is running',
+            'bot_info': bot_info.username if bot_info else None
+        })
+    except Exception as e:
+        logger.error(f"Error in root route: {e}")
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 if __name__ == "__main__":
-    # This is used when running locally
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=5000, debug=True)

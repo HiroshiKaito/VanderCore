@@ -143,7 +143,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python -m unittest test_automated_signal_generator.py -v"
+args = "python -m pytest test_automated_signal_generator.py -v"
 
 [[workflows.workflow]]
 name = "Test Suite"

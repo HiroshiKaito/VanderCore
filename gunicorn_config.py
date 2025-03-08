@@ -19,7 +19,7 @@ keepalive = 65  # Längerer Keepalive für stabilere Verbindungen
 # Logging
 accesslog = "access.log"
 errorlog = "error.log"
-loglevel = "info"
+loglevel = "debug"  # Temporär auf debug für bessere Fehleranalyse
 capture_output = True
 enable_stdio_inheritance = True
 
@@ -32,24 +32,13 @@ group = None
 tmp_upload_dir = None
 
 # Reload und Debug Einstellungen
-reload = False  # Deaktiviert für Produktionsumgebung
+reload = True  # Aktiviert für Entwicklung
 spew = False
-check_config = False
-
-# Worker Neustart
-max_requests = 1000  # Worker-Neustarts nach X Anfragen
-max_requests_jitter = 50  # Zufällige Verzögerung beim Neustart
-graceful_timeout = 120  # Zeit für Worker-Neustarts
-
-# Fehlerbehandlung
-retry_policy = {
-    'max_retries': 3,
-    'retry_delay': 5
-}
+check_config = True
 
 # Prozess Benennung
-proc_name = "telegram_bot"
+proc_name = "solana_trading_bot"
 
-# SSL Konfiguration
+# SSL Konfiguration (falls benötigt)
 keyfile = None
 certfile = None
