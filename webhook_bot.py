@@ -19,11 +19,9 @@ from telegram.ext import (
 from telegram.error import TelegramError, NetworkError, TimedOut
 from config import config
 from wallet_manager import WalletManager
-# Assuming these are defined elsewhere, as they are not included in the original code
 from dex_connector import DexConnector
 from signal_processor import SignalProcessor
 from automated_signal_generator import AutomatedSignalGenerator
-
 
 # Configure logging
 logging.basicConfig(
