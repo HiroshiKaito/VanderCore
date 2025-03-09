@@ -177,14 +177,13 @@ def button_handler(update: Update, context: CallbackContext):
                     "🔑 Öffentliche Wallet-Adresse:\n"
                     f"{public_key}\n\n"
                     "⚠️ WICHTIG: Sichere deinen Private Key!\n\n"
-                    "Was möchtest du als Nächstes tun?",
+                    "Ready to trade? 🎬",
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💰 Wallet anzeigen", callback_data="show_wallet")]
+                        [InlineKeyboardButton("Let's go! 🚀", callback_data="start_signal_search")]
                     ])
                 )
             else:
                 query.message.reply_text("❌ Fehler bei der Wallet-Erstellung")
-
         elif query.data == "show_qr":
             if user_id in user_private_keys:
                 wallet_manager.load_wallet(user_private_keys[user_id])
@@ -198,6 +197,9 @@ def button_handler(update: Update, context: CallbackContext):
                     "Guthaben eingegangen ist! 🚀"
                 )
             )
+        elif query.data == "start_signal_search":
+            # Add your logic to start signal search here.  For example:
+            query.message.reply_text("Starting signal search...")
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {e}")
