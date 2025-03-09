@@ -19,6 +19,11 @@ from telegram.ext import (
 from telegram.error import TelegramError, NetworkError, TimedOut
 from config import config
 from wallet_manager import WalletManager
+# Assuming these are defined elsewhere, as they are not included in the original code
+from dex_connector import DexConnector
+from signal_processor import SignalProcessor
+from automated_signal_generator import AutomatedSignalGenerator
+
 
 # Configure logging
 logging.basicConfig(
@@ -53,6 +58,16 @@ def setup_bot():
         bot = Bot(token=config.TELEGRAM_TOKEN)
         dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
         wallet_manager = WalletManager(config.SOLANA_RPC_URL)
+
+        # Initialisiere Signal Generator
+        dex_connector = DexConnector()
+        signal_processor = SignalProcessor()
+        webhook_manager.signal_generator = AutomatedSignalGenerator(
+            dex_connector,
+            signal_processor,
+            bot
+        )
+        logger.info("Signal Generator initialisiert")
 
         # Register handlers
         register_handlers()
@@ -158,7 +173,7 @@ def button_handler(update: Update, context: CallbackContext):
     user_id = str(query.from_user.id)
 
     try:
-        query.answer()
+        query.answer()  # Bestätige den Button-Click
 
         if query.data == "create_wallet":
             # Erstelle neue Wallet
@@ -198,8 +213,32 @@ def button_handler(update: Update, context: CallbackContext):
                 )
             )
         elif query.data == "start_signal_search":
-            # Add your logic to start signal search here.  For example:
-            query.message.reply_text("Starting signal search...")
+            logger.info(f"Signal-Suche aktiviert von User {user_id}")
+            try:
+                # Füge Benutzer zu aktiven Nutzern hinzu
+                webhook_manager.active_users.add(user_id)
+                save_user_wallets()  # Speichere aktive Nutzer
+                logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
+
+                # Starte Signal Generator falls noch nicht aktiv
+                if not webhook_manager.signal_generator.is_running:
+                    logger.info("Starte Signal Generator...")
+                    webhook_manager.signal_generator.start()
+                    logger.info("Signal Generator erfolgreich gestartet")
+
+                # Bestätige die Aktivierung
+                query.message.reply_text(
+                    "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
+                    "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n\n"
+                    "Status: 🟢 Signal Generator aktiv"
+                )
+
+            except Exception as e:
+                logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
+                query.message.reply_text(
+                    "❌ Fehler beim Aktivieren der Signal-Suche.\n"
+                    "Bitte versuchen Sie es später erneut."
+                )
 
     except Exception as e:
         logger.error(f"Fehler im Button Handler: {e}")
@@ -232,7 +271,8 @@ def save_user_wallets():
     try:
         data = {
             'wallets': user_wallets,
-            'private_keys': user_private_keys
+            'private_keys': user_private_keys,
+            'active_users': webhook_manager.active_users
         }
         with open('user_wallets.json', 'w') as f:
             json.dump(data, f)
@@ -249,6 +289,9 @@ def load_user_wallets():
                 data = json.load(f)
                 user_wallets = data.get('wallets', {})
                 user_private_keys = data.get('private_keys', {})
+                if 'active_users' in data:
+                    webhook_manager.active_users = set(data['active_users'])
+
             logger.info("Wallet-Daten geladen")
     except Exception as e:
         logger.error(f"Fehler beim Laden der Wallet-Daten: {e}")
@@ -277,6 +320,8 @@ class WebhookManager:
         self.webhook_url = None
         self.base_url = None
         self.health_status = True
+        self.active_users = set()
+        self.signal_generator = None
 
     def check_port_open(self, host, port):
         """Überprüft ob ein Port erreichbar ist"""
