@@ -1,3 +1,4 @@
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -8,3 +9,22 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Logs
+*.log
+
+# Environment variables
+.env
+
+# Generated files
+bot_state.json
+user_wallets.json
+
+# Cache files
+.pytest_cache/
+.config/
+
+# Replit specific
+.replit
+replit.nix
+.cache/
