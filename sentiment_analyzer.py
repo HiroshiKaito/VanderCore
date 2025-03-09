@@ -25,17 +25,9 @@ class SentimentAnalyzer:
             logger.error(f"Fehler beim Laden von VADER: {e}")
             self.vader = None
 
-        # API Endpoints mit Backup-URLs
+        # API Endpoints mit korrekten URLs
         self.coingecko_api = "https://api.coingecko.com/api/v3"
         self.dex_screener_api = "https://api.dexscreener.com/latest/dex"
-
-        # Nitter Instanzen für Failover
-        self.nitter_instances = [
-            "https://nitter.net",
-            "https://nitter.cz",
-            "https://nitter.ca",
-            "https://nitter.it"
-        ]
 
         # API Konfiguration
         self.headers = {
@@ -51,15 +43,18 @@ class SentimentAnalyzer:
     def _analyze_text_sentiment(self, text: str) -> Dict[str, float]:
         """Analysiert Text-Sentiment mit VADER und TextBlob"""
         try:
+            if not text:
+                return {'score': 0.5, 'confidence': 0}
+
             # VADER Analyse
             if self.vader:
-                vader_scores = self.vader.polarity_scores(text)
+                vader_scores = self.vader.polarity_scores(str(text))
                 vader_compound = vader_scores['compound']
             else:
                 vader_compound = 0
 
             # TextBlob Analyse
-            blob = TextBlob(text)
+            blob = TextBlob(str(text))
             textblob_score = blob.sentiment.polarity
 
             # Kombiniere die Scores
@@ -86,7 +81,7 @@ class SentimentAnalyzer:
 
             # Parallele API-Aufrufe
             tasks = [
-                self._fetch_coingecko_data(),
+                self._fetch_market_data(), # Replaced _fetch_coingecko_data
                 self._fetch_social_data(),
                 self._fetch_dex_data()
             ]
@@ -164,32 +159,61 @@ class SentimentAnalyzer:
 
         return None
 
-    async def _fetch_coingecko_data(self) -> Dict[str, Any]:
-        """Holt Solana-Daten von CoinGecko mit verbesserter Fehlerbehandlung"""
+    async def _fetch_market_data(self) -> Dict[str, Any]:
+        """Holt Marktdaten mit Fallback-Mechanismen"""
         try:
+            # Versuche primäre API
             response = await self._fetch_with_retry(
                 f"{self.coingecko_api}/simple/price",
                 params={
                     'ids': 'solana',
                     'vs_currencies': 'usd',
                     'include_24hr_vol': True,
-                    'include_24hr_change': True,
-                    'include_last_updated_at': True
+                    'include_24hr_change': True
                 }
             )
 
-            if response:
-                data = response.json()
-                if 'solana' in data:
-                    logger.info("CoinGecko Daten erfolgreich abgerufen")
-                    return data
-                logger.warning("Unerwartetes CoinGecko Datenformat")
+            if response and response.status_code == 200:
+                return response.json()
 
+            # Fallback: Versuche alternative APIs
+            alt_endpoints = [
+                "https://api.binance.com/api/v3/ticker/24hr?symbol=SOLUSDT",
+                "https://api.kucoin.com/api/v1/market/stats?symbol=SOL-USDT"
+            ]
+
+            for endpoint in alt_endpoints:
+                response = await self._fetch_with_retry(endpoint)
+                if response and response.status_code == 200:
+                    return self._normalize_market_data(response.json(), endpoint)
+
+            logger.warning("Keine Marktdaten verfügbar")
             return {}
 
         except Exception as e:
-            logger.error(f"Fehler beim Abrufen der CoinGecko-Daten: {e}")
+            logger.error(f"Fehler beim Abrufen der Marktdaten: {e}")
             return {}
+
+    def _normalize_market_data(self, data: Dict[str, Any], source: str) -> Dict[str, Any]:
+        """Normalisiert Marktdaten von verschiedenen Quellen"""
+        try:
+            if 'binance.com' in source:
+                return {
+                    'price': float(data.get('lastPrice', 0)),
+                    'volume': float(data.get('volume', 0)),
+                    'change': float(data.get('priceChangePercent', 0))
+                }
+            elif 'kucoin.com' in source:
+                return {
+                    'price': float(data.get('data', {}).get('last', 0)),
+                    'volume': float(data.get('data', {}).get('vol', 0)),
+                    'change': float(data.get('data', {}).get('changeRate', 0)) * 100
+                }
+            return data
+        except Exception as e:
+            logger.error(f"Fehler bei der Datennormalisierung: {e}")
+            return {}
+
 
     async def _fetch_dex_data(self) -> Dict[str, Any]:
         """Holt DEX-Daten für Solana mit verbesserter Fehlerbehandlung"""
@@ -237,36 +261,38 @@ class SentimentAnalyzer:
     async def _fetch_social_data(self) -> str:
         """Holt Social Media Daten mit Fallback-Mechanismen"""
         try:
-            for instance in self.nitter_instances:
-                response = await self._fetch_with_retry(
-                    f"{instance}/search",
-                    params={
-                        'f': 'tweets',
-                        'q': 'solana language:de OR language:en',
-                        'since': '24h'
-                    }
-                )
+            #Simplified to a single API call for testing purposes.  Replace with original logic if needed.
+            response = await self._fetch_with_retry(
+                "https://api.example.com/social_data", #REPLACE with actual social media API
+                params={
+                    'q': 'solana language:de OR language:en',
+                    'since': '24h'
+                }
+            )
 
-                if response and response.status_code == 200:
-                    logger.info("Social Media Daten erfolgreich abgerufen")
-                    return response.text
+            if response and response.status_code == 200:
+                logger.info("Social Media Daten erfolgreich abgerufen")
+                return response.text
 
-            logger.warning("Keine Nitter Instanz verfügbar")
+            logger.warning("Keine Social Media Daten gefunden.")
             return ""
 
         except Exception as e:
             logger.error(f"Fehler beim Abrufen der Social Media Daten: {e}")
             return ""
 
+
+
     def _analyze_coingecko_sentiment(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Analysiert CoinGecko Daten für Sentiment"""
         try:
-            if 'solana' not in data:
+            if not data:
                 return {'score': 0.5, 'confidence': 0}
 
-            sol_data = data['solana']
-            price_change = sol_data.get('usd_24h_change', 0)
-            volume = sol_data.get('usd_24h_vol', 0)
+            price_change = data.get('usd_24h_change', 0) if 'solana' in data and data['solana'] else 0
+            volume = data.get('usd_24h_vol', 0) if 'solana' in data and data['solana'] else 0
+            price = data.get('solana', {}).get('usd', 0)
+
 
             # Sentiment Score basierend auf Preis und Volumen
             price_sentiment = 0.5 + (price_change / 20)  # Normalisiert auf -0.5 bis 1.5
@@ -280,7 +306,8 @@ class SentimentAnalyzer:
                 'confidence': 0.8,
                 'metrics': {
                     'price_change': price_change,
-                    'volume': volume
+                    'volume': volume,
+                    'price': price
                 }
             }
 

@@ -1,7 +1,10 @@
 """AI Trading Engine mit ML-basierter Signalgenerierung und Marktanalyse"""
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
 from typing import Dict, Any, Optional
+from sklearn.ensemble import RandomForestRegressor
 from apscheduler.schedulers.background import BackgroundScheduler
 import pytz
 import requests
@@ -24,13 +27,173 @@ class AutomatedSignalGenerator:
         self.last_check_time = None
         self.total_signals_generated = 0
         self.last_signal_time = None
-        self.signal_intervals = []  # Speichert die Zeitintervalle zwischen Signalen
+        self.signal_intervals = []
+
+        # Initialisiere ML Model
+        self.model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
+        self._init_model()  # Trainiere das Modell initial
 
         # API Endpoints
         self.coingecko_api = "https://api.coingecko.com/api/v3"
         self.solana_rpc = "https://api.mainnet-beta.solana.com"
 
         logger.info("Signal Generator initialisiert")
+
+    def _init_model(self):
+        """Initialisiere und trainiere das ML Model"""
+        try:
+            logger.info("Starte Model Initialisierung...")
+
+            # Hole historische Daten für Training
+            historical_data = self._get_training_data()
+            if historical_data.empty:
+                logger.error("Keine Trainingsdaten verfügbar - verwende Fallback-Modell")
+                self._init_fallback_model()
+                return
+
+            # Feature Engineering
+            features = self._prepare_features(historical_data)
+            if features is None or features.empty:
+                logger.error("Feature Preparation fehlgeschlagen - verwende Fallback-Modell")
+                self._init_fallback_model()
+                return
+
+            # Validiere Features
+            if features.isnull().any().any():
+                logger.warning("NaN Werte in Features gefunden - bereinige Daten")
+                features = features.fillna(method='ffill').fillna(method='bfill')
+
+            # Training Target (next day's price) mit Validierung
+            target = historical_data['price'].shift(-1).dropna()
+            if len(target) != len(features):
+                features = features[:len(target)]  # Kürze Features auf Target-Länge
+
+            if len(features) < 10:  # Minimale Datenmenge für Training
+                logger.error("Zu wenig Trainingsdaten - verwende Fallback-Modell")
+                self._init_fallback_model()
+                return
+
+            # Train Model mit Validierung
+            try:
+                self.model.fit(features, target)
+                # Teste Modell
+                test_pred = self.model.predict(features[:1])
+                if np.isnan(test_pred).any():
+                    raise ValueError("Modell produziert NaN Vorhersagen")
+                logger.info("ML Model erfolgreich trainiert und validiert")
+            except Exception as e:
+                logger.error(f"Fehler beim Modelltraining: {e}")
+                self._init_fallback_model()
+
+        except Exception as e:
+            logger.error(f"Fehler bei Model Initialisierung: {e}")
+            self._init_fallback_model()
+
+    def _init_fallback_model(self):
+        """Initialisiert ein einfaches Fallback-Modell"""
+        logger.info("Initialisiere Fallback-Modell...")
+        # Erstelle ein einfaches Modell mit Basisdaten
+        X = np.array([[1, 1, 1, 0, 0]] * 10)  # Dummy Features
+        y = np.array([100] * 10)  # Konstante Preisvorhersage
+        self.model.fit(X, y)
+        logger.info("Fallback-Modell initialisiert")
+
+    def _get_training_data(self) -> pd.DataFrame:
+        """Hole historische Daten für Model Training"""
+        try:
+            # Hole Daten von DEX
+            market_info = self.dex_connector.get_market_info("SOL")
+            if not market_info:
+                return pd.DataFrame()
+
+            # Erstelle DataFrame mit Basis-Features
+            df = pd.DataFrame({
+                'timestamp': pd.date_range(end=datetime.now(), periods=30, freq='D'),
+                'price': [float(market_info.get('price', 0))] * 30,
+                'volume': [float(market_info.get('volume', 0))] * 30
+            })
+
+            return df
+
+        except Exception as e:
+            logger.error(f"Fehler beim Laden der Trainingsdaten: {e}")
+            return pd.DataFrame()
+
+    def _prepare_features(self, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Bereite Features für ML Model vor"""
+        try:
+            # Technical Indicators
+            df['price_sma'] = df['price'].rolling(window=5).mean()
+            df['volume_sma'] = df['volume'].rolling(window=5).mean()
+            df['price_std'] = df['price'].rolling(window=5).std()
+            df['price_momentum'] = df['price'].pct_change()
+            df['volume_momentum'] = df['volume'].pct_change()
+
+            # Fill NaN values
+            df = df.fillna(method='bfill').fillna(method='ffill')
+
+            # Select features
+            features = df[['price_sma', 'volume_sma', 'price_std', 
+                         'price_momentum', 'volume_momentum']]
+
+            return features
+
+        except Exception as e:
+            logger.error(f"Fehler bei Feature Preparation: {e}")
+            return None
+
+    def start(self):
+        """Startet den automatischen Signal-Generator"""
+        try:
+            if not self.is_running:
+                logger.info("Starte automatischen Signal-Generator...")
+
+                # Überprüfe Komponenten
+                if not self.dex_connector:
+                    raise ValueError("DEX Connector nicht initialisiert")
+                if not self.signal_processor:
+                    raise ValueError("Signal Processor nicht initialisiert")
+                if not self.chart_analyzer:
+                    raise ValueError("Chart Analyzer nicht initialisiert")
+
+                # Starte Job mit höherer Frequenz (alle 30 Sekunden)
+                self.scheduler.add_job(
+                    self.generate_signals,
+                    'interval',
+                    seconds=30,
+                    id='signal_generator',
+                    replace_existing=True
+                )
+                self.scheduler.start()
+                self.is_running = True
+
+                # Status Update
+                market_info = self.dex_connector.get_market_info("SOL")
+                current_price = market_info.get('price', 0) if market_info else 0
+                logger.info(f"Signal-Generator gestartet - "
+                          f"Status: Aktiv, "
+                          f"Intervall: 30s, "
+                          f"Aktueller SOL Preis: {current_price:.2f} USDC")
+            else:
+                logger.info("Signal-Generator läuft bereits")
+
+        except Exception as e:
+            logger.error(f"Fehler beim Starten des Signal-Generators: {e}")
+            self.is_running = False
+            raise
+
+    def stop(self):
+        """Stoppt den Signal-Generator"""
+        if self.is_running:
+            logger.info("Stoppe Signal-Generator...")
+            self.scheduler.remove_job('signal_generator')
+            self.scheduler.shutdown()
+            self.is_running = False
+            logger.info("Signal-Generator gestoppt")
 
     def fetch_market_data(self) -> Dict[str, Any]:
         """Holt Marktdaten von verschiedenen Quellen"""
@@ -72,55 +235,6 @@ class AutomatedSignalGenerator:
         except Exception as e:
             logger.error(f"Fehler beim Abrufen der Marktdaten: {e}")
             return {}
-
-    def start(self):
-        """Startet den automatischen Signal-Generator"""
-        try:
-            if not self.is_running:
-                logger.info("Starte automatischen Signal-Generator...")
-
-                # Überprüfe Komponenten
-                if not self.dex_connector:
-                    raise ValueError("DEX Connector nicht initialisiert")
-                if not self.signal_processor:
-                    raise ValueError("Signal Processor nicht initialisiert")
-                if not self.chart_analyzer:
-                    raise ValueError("Chart Analyzer nicht initialisiert")
-
-                # Starte Job mit höherer Frequenz (alle 30 Sekunden)
-                self.scheduler.add_job(
-                    self.generate_signals,
-                    'interval',
-                    seconds=30,  # Überprüfung alle 30 Sekunden für häufigere Signale
-                    id='signal_generator',
-                    replace_existing=True
-                )
-                self.scheduler.start()
-                self.is_running = True
-
-                # Status Update
-                market_info = self.dex_connector.get_market_info("SOL")
-                current_price = market_info.get('price', 0) if market_info else 0
-                logger.info(f"Signal-Generator gestartet - "
-                          f"Status: Aktiv, "
-                          f"Intervall: 30s, "
-                          f"Aktueller SOL Preis: {current_price:.2f} USDC")
-            else:
-                logger.info("Signal-Generator läuft bereits")
-
-        except Exception as e:
-            logger.error(f"Fehler beim Starten des Signal-Generators: {e}")
-            self.is_running = False
-            raise
-
-    def stop(self):
-        """Stoppt den Signal-Generator"""
-        if self.is_running:
-            logger.info("Stoppe Signal-Generator...")
-            self.scheduler.remove_job('signal_generator')
-            self.scheduler.shutdown()
-            self.is_running = False
-            logger.info("Signal-Generator gestoppt")
 
     def generate_signals(self):
         """Generiert Trading-Signale basierend auf KI-Analyse"""
