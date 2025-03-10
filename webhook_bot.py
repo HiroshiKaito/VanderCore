@@ -4,7 +4,6 @@ Telegram Bot mit Webhook-Integration für Solana Trading
 import logging
 import os
 import json
-import atexit
 from flask import Flask, jsonify, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
@@ -17,7 +16,7 @@ from wallet_manager import WalletManager
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
-    level=logging.DEBUG,  # Erhöhtes Log-Level
+    level=logging.DEBUG,
     handlers=[
         logging.FileHandler("webhook_bot.log"),
         logging.StreamHandler()
@@ -87,8 +86,6 @@ def register_handlers():
         dispatcher.add_handler(CommandHandler("start", start))
         dispatcher.add_handler(CommandHandler("wallet", wallet_command))
         dispatcher.add_handler(CallbackQueryHandler(button_handler))
-        dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
-        dispatcher.add_error_handler(error_handler)
         logger.info("Handler erfolgreich registriert")
     except Exception as e:
         logger.error(f"Fehler beim Registrieren der Handler: {e}", exc_info=True)
@@ -121,6 +118,86 @@ def start(update: Update, context: CallbackContext):
             "❌ Ein Fehler ist aufgetreten.\n"
             "Versuche es später erneut!"
         )
+
+def button_handler(update: Update, context: CallbackContext):
+    """Handler für Button-Callbacks"""
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+
+    try:
+        query.answer()  # Bestätige den Button-Click
+
+        if query.data == "create_wallet":
+            # Erstelle neue Wallet
+            if wallet_manager:
+                public_key, private_key = wallet_manager.create_wallet()
+
+                if public_key and private_key:
+                    # Speichere Wallet-Informationen
+                    user_wallets[user_id] = public_key
+                    user_private_keys[user_id] = private_key
+                    save_user_wallets()
+
+                    query.message.reply_text(
+                        "🌟 Wallet erfolgreich erstellt!\n\n"
+                        "🔐 Private Key (streng geheim):\n"
+                        f"`{private_key}`\n\n"
+                        "🔑 Öffentliche Wallet-Adresse:\n"
+                        f"`{public_key}`\n\n"
+                        "⚠️ WICHTIG: Sichere deinen Private Key!\n\n"
+                        "Ready to trade? 🎬",
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup([
+                            [InlineKeyboardButton("Let's go! 🚀", callback_data="start_signal_search")]
+                        ])
+                    )
+                else:
+                    query.message.reply_text("❌ Fehler bei der Wallet-Erstellung")
+            else:
+                logger.error("Wallet Manager nicht initialisiert")
+                query.message.reply_text("❌ Service temporär nicht verfügbar")
+
+        elif query.data == "start_signal_search":
+            logger.info(f"Signal-Suche aktiviert von User {user_id}")
+            query.message.reply_text(
+                "✨ Perfect! Die Signal-Suche wird bald verfügbar sein.\n\n"
+                "Status: 🟡 In Vorbereitung"
+            )
+
+    except Exception as e:
+        logger.error(f"Fehler im Button Handler: {e}", exc_info=True)
+        query.message.reply_text(
+            "❌ Ein Fehler ist aufgetreten.\n"
+            "Versuche es später erneut!"
+        )
+
+def save_user_wallets():
+    """Speichert die User-Wallet-Daten"""
+    try:
+        data = {
+            'wallets': user_wallets,
+            'private_keys': user_private_keys
+        }
+        with open('user_wallets.json', 'w') as f:
+            json.dump(data, f)
+        logger.info("Wallet-Daten gespeichert")
+    except Exception as e:
+        logger.error(f"Fehler beim Speichern der Wallet-Daten: {e}", exc_info=True)
+
+def load_user_wallets():
+    """Lädt die User-Wallet-Daten"""
+    global user_wallets, user_private_keys
+    try:
+        if os.path.exists('user_wallets.json'):
+            with open('user_wallets.json', 'r') as f:
+                data = json.load(f)
+                user_wallets = data.get('wallets', {})
+                user_private_keys = data.get('private_keys', {})
+            logger.info("Wallet-Daten geladen")
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Wallet-Daten: {e}", exc_info=True)
+        user_wallets = {}
+        user_private_keys = {}
 
 def wallet_command(update: Update, context: CallbackContext):
     """Handler für den /wallet Befehl"""
@@ -158,124 +235,6 @@ def wallet_command(update: Update, context: CallbackContext):
             "Versuche es später erneut!"
         )
 
-def button_handler(update: Update, context: CallbackContext):
-    """Handler für Button-Callbacks"""
-    query = update.callback_query
-    user_id = str(query.from_user.id)
-
-    try:
-        query.answer()  # Bestätige den Button-Click
-
-        if query.data == "create_wallet":
-            # Erstelle neue Wallet
-            public_key, private_key = wallet_manager.create_wallet()
-
-            if public_key and private_key:
-                # Speichere Wallet-Informationen
-                user_wallets[user_id] = public_key
-                user_private_keys[user_id] = private_key
-                save_user_wallets()
-
-                query.message.reply_text(
-                    "🌟 Wallet erfolgreich erstellt!\n\n"
-                    "🔐 Private Key (streng geheim):\n"
-                    f"{private_key}\n\n"
-                    "🔑 Öffentliche Wallet-Adresse:\n"
-                    f"{public_key}\n\n"
-                    "⚠️ WICHTIG: Sichere deinen Private Key!\n\n"
-                    "Ready to trade? 🎬",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("Let's go! 🚀", callback_data="start_signal_search")]
-                    ])
-                )
-            else:
-                query.message.reply_text("❌ Fehler bei der Wallet-Erstellung")
-
-        elif query.data == "show_qr":
-            if user_id in user_private_keys:
-                wallet_manager.load_wallet(user_private_keys[user_id])
-                qr_buffer = wallet_manager.generate_qr_code()
-                query.message.reply_photo(
-                    photo=qr_buffer,
-                    caption=(
-                        "🎯 Hier ist dein QR-Code zum Einzahlen!\n\n"
-                        "Ich sage dir Bescheid, sobald dein\n"
-                        "Guthaben eingegangen ist! 🚀"
-                    )
-                )
-
-        elif query.data == "start_signal_search":
-            logger.info(f"Signal-Suche aktiviert von User {user_id}")
-            query.message.reply_text(
-                "✨ Perfect! Die Signal-Suche wird bald verfügbar sein.\n\n"
-                "Status: 🟡 In Vorbereitung"
-            )
-
-    except Exception as e:
-        logger.error(f"Fehler im Button Handler: {e}", exc_info=True)
-        query.message.reply_text(
-            "❌ Ein Fehler ist aufgetreten.\n"
-            "Versuche es später erneut!"
-        )
-
-def message_handler(update: Update, context: CallbackContext):
-    """Handler für normale Nachrichten"""
-    try:
-        update.message.reply_text(
-            "Nutze die Buttons oder diese Befehle:\n"
-            "/start - Bot neu starten\n"
-            "/wallet - Wallet anzeigen"
-        )
-    except Exception as e:
-        logger.error(f"Fehler im Message Handler: {e}", exc_info=True)
-
-def error_handler(update: Update, context: CallbackContext):
-    """Fehlerbehandlung für den Bot"""
-    try:
-        if context.error:
-            logger.error(f"Update {update} verursachte Fehler {context.error}", exc_info=True)
-    except Exception as e:
-        logger.error(f"Fehler im Error Handler: {e}", exc_info=True)
-
-def save_user_wallets():
-    """Speichert die User-Wallet-Daten"""
-    try:
-        data = {
-            'wallets': user_wallets,
-            'private_keys': user_private_keys
-        }
-        with open('user_wallets.json', 'w') as f:
-            json.dump(data, f)
-        logger.info("Wallet-Daten gespeichert")
-    except Exception as e:
-        logger.error(f"Fehler beim Speichern der Wallet-Daten: {e}", exc_info=True)
-
-def load_user_wallets():
-    """Lädt die User-Wallet-Daten"""
-    global user_wallets, user_private_keys
-    try:
-        if os.path.exists('user_wallets.json'):
-            with open('user_wallets.json', 'r') as f:
-                data = json.load(f)
-                user_wallets = data.get('wallets', {})
-                user_private_keys = data.get('private_keys', {})
-            logger.info("Wallet-Daten geladen")
-    except Exception as e:
-        logger.error(f"Fehler beim Laden der Wallet-Daten: {e}", exc_info=True)
-        user_wallets = {}
-        user_private_keys = {}
-
-def cleanup():
-    """Cleanup beim Beenden"""
-    try:
-        save_user_wallets()
-        if bot:
-            bot.delete_webhook()
-        logger.info("Cleanup durchgeführt")
-    except Exception as e:
-        logger.error(f"Fehler beim Cleanup: {e}", exc_info=True)
-
-atexit.register(cleanup)
 
 @app.route('/' + config.TELEGRAM_TOKEN, methods=['POST'])
 def webhook():
