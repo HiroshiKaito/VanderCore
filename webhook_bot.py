@@ -73,6 +73,19 @@ def setup_bot():
         logger.debug("Lade Wallet-Daten...")
         load_user_wallets()
 
+        # Setze Webhook
+        replit_domain = os.environ.get('REPL_SLUG', '')
+        if replit_domain:
+            webhook_url = f"https://{replit_domain}.replit.app/{config.TELEGRAM_TOKEN}"
+            logger.info(f"Setze Webhook URL: {webhook_url}")
+
+            # Lösche alten Webhook und setze neuen
+            bot.delete_webhook()
+            bot.set_webhook(webhook_url)
+
+            webhook_info = bot.get_webhook_info()
+            logger.info(f"Webhook Status: URL={webhook_info.url}")
+
         logger.info("Bot-Initialisierung erfolgreich abgeschlossen")
         return True
 
@@ -234,7 +247,6 @@ def wallet_command(update: Update, context: CallbackContext):
             "❌ Ein Fehler ist aufgetreten.\n"
             "Versuche es später erneut!"
         )
-
 
 @app.route('/' + config.TELEGRAM_TOKEN, methods=['POST'])
 def webhook():
