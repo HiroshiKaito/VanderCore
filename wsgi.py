@@ -1,40 +1,29 @@
 import logging
 from flask import Flask, jsonify
 from config import config
-from webhook_bot import app, setup_bot, get_bot_info
+from webhook_bot import app, setup_bot
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,  # Erhöhtes Log-Level für bessere Fehleranalyse
     handlers=[
-        logging.FileHandler("webhook_bot.log"),
+        logging.FileHandler("wsgi.log"),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
 # Initialize bot
-if not setup_bot():
-    logger.critical("Bot-Initialisierung fehlgeschlagen. Überprüfen Sie die Umgebungsvariablen.")
-
-# Make sure the root route is defined
-@app.route('/')
-def root():
-    """Root route to confirm server is running"""
-    try:
-        bot_info = get_bot_info()
-        return jsonify({
-            'status': 'running',
-            'message': 'Solana Trading Bot Server is running',
-            'bot_info': bot_info.username if bot_info else None
-        })
-    except Exception as e:
-        logger.error(f"Error in root route: {e}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+try:
+    logger.debug("Starting bot initialization...")
+    if not setup_bot():
+        logger.critical("Bot-Initialisierung fehlgeschlagen. Überprüfen Sie die Umgebungsvariablen.")
+        raise RuntimeError("Bot setup failed")
+    logger.info("Bot successfully initialized")
+except Exception as e:
+    logger.critical(f"Critical error during bot initialization: {e}", exc_info=True)
+    raise
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=5000)

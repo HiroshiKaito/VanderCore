@@ -5,28 +5,19 @@ import logging
 import os
 import json
 import atexit
-import time
-import threading
-import socket
-from concurrent.futures import ThreadPoolExecutor
-from queue import Queue
 from flask import Flask, jsonify, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     CommandHandler, CallbackContext, CallbackQueryHandler,
     MessageHandler, Filters, Dispatcher
 )
-from telegram.error import TelegramError, NetworkError, TimedOut
 from config import config
 from wallet_manager import WalletManager
-from dex_connector import DexConnector
-from signal_processor import SignalProcessor
-from automated_signal_generator import AutomatedSignalGenerator
 
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,  # Erhöhtes Log-Level
     handlers=[
         logging.FileHandler("webhook_bot.log"),
         logging.StreamHandler()
@@ -36,8 +27,6 @@ logger = logging.getLogger(__name__)
 
 # Flask App für Webhook
 app = Flask(__name__)
-
-# Konfiguriere Flask
 app.config['JSON_AS_ASCII'] = False
 app.config['PROPAGATE_EXCEPTIONS'] = True
 
@@ -52,40 +41,45 @@ def setup_bot():
     """Initialisiert den Bot und registriert Handler"""
     global bot, dispatcher, wallet_manager
     try:
+        logger.info("Starte Bot-Initialisierung...")
+
+        # Überprüfe TELEGRAM_TOKEN
+        if not config.TELEGRAM_TOKEN:
+            logger.error("TELEGRAM_TOKEN nicht gefunden in Umgebungsvariablen")
+            logger.debug(f"Verfügbare Umgebungsvariablen: {', '.join(list(os.environ.keys()))}")
+            return False
+
         # Initialisiere Bot
+        logger.debug("Initialisiere Bot mit Token...")
         bot = Bot(token=config.TELEGRAM_TOKEN)
+
+        # Test Bot Connection
+        logger.debug("Teste Bot-Verbindung...")
+        me = bot.get_me()
+        logger.info(f"Bot-Verbindung erfolgreich: {me.username}")
+
+        # Initialisiere Dispatcher
+        logger.debug("Initialisiere Dispatcher...")
         dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
+
+        # Initialisiere Wallet Manager
+        logger.debug("Initialisiere Wallet Manager...")
         wallet_manager = WalletManager(config.SOLANA_RPC_URL)
 
-        # Initialisiere Signal Generator
-        dex_connector = DexConnector()
-        signal_processor = SignalProcessor()
-        webhook_manager.signal_generator = AutomatedSignalGenerator(
-            dex_connector,
-            signal_processor,
-            bot
-        )
-        logger.info("Signal Generator initialisiert")
-
         # Register handlers
+        logger.debug("Registriere Handler...")
         register_handlers()
 
         # Load wallets
+        logger.debug("Lade Wallet-Daten...")
         load_user_wallets()
 
-        logger.info(f"Bot initialized successfully: {bot.get_me().username}")
+        logger.info("Bot-Initialisierung erfolgreich abgeschlossen")
         return True
-    except Exception as e:
-        logger.error(f"Error initializing bot: {e}")
-        return False
 
-def get_bot_info():
-    """Returns bot info for health checks"""
-    try:
-        return bot.get_me() if bot else None
     except Exception as e:
-        logger.error(f"Error getting bot info: {e}")
-        return None
+        logger.error(f"Kritischer Fehler bei Bot-Initialisierung: {e}", exc_info=True)
+        return False
 
 def register_handlers():
     """Registriert die Bot-Handler"""
@@ -95,9 +89,9 @@ def register_handlers():
         dispatcher.add_handler(CallbackQueryHandler(button_handler))
         dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, message_handler))
         dispatcher.add_error_handler(error_handler)
-        logger.info("Handlers registered successfully")
+        logger.info("Handler erfolgreich registriert")
     except Exception as e:
-        logger.error(f"Error registering handlers: {e}")
+        logger.error(f"Fehler beim Registrieren der Handler: {e}", exc_info=True)
         raise
 
 def start(update: Update, context: CallbackContext):
@@ -122,7 +116,7 @@ def start(update: Update, context: CallbackContext):
         )
 
     except Exception as e:
-        logger.error(f"Fehler beim Start-Command: {e}")
+        logger.error(f"Fehler beim Start-Command: {e}", exc_info=True)
         update.message.reply_text(
             "❌ Ein Fehler ist aufgetreten.\n"
             "Versuche es später erneut!"
@@ -143,7 +137,6 @@ def wallet_command(update: Update, context: CallbackContext):
 
         if wallet_manager and user_id in user_private_keys:
             wallet_manager.load_wallet(user_private_keys[user_id])
-
             balance = wallet_manager.get_balance()
             address = wallet_manager.get_address()
 
@@ -159,7 +152,7 @@ def wallet_command(update: Update, context: CallbackContext):
             )
 
     except Exception as e:
-        logger.error(f"Fehler beim Wallet-Command: {e}")
+        logger.error(f"Fehler beim Wallet-Command: {e}", exc_info=True)
         update.message.reply_text(
             "❌ Ein Fehler ist aufgetreten.\n"
             "Versuche es später erneut!"
@@ -197,49 +190,29 @@ def button_handler(update: Update, context: CallbackContext):
                 )
             else:
                 query.message.reply_text("❌ Fehler bei der Wallet-Erstellung")
+
         elif query.data == "show_qr":
             if user_id in user_private_keys:
                 wallet_manager.load_wallet(user_private_keys[user_id])
-
-            qr_buffer = wallet_manager.generate_qr_code()
-            query.message.reply_photo(
-                photo=qr_buffer,
-                caption=(
-                    "🎯 Hier ist dein QR-Code zum Einzahlen!\n\n"
-                    "Ich sage dir Bescheid, sobald dein\n"
-                    "Guthaben eingegangen ist! 🚀"
+                qr_buffer = wallet_manager.generate_qr_code()
+                query.message.reply_photo(
+                    photo=qr_buffer,
+                    caption=(
+                        "🎯 Hier ist dein QR-Code zum Einzahlen!\n\n"
+                        "Ich sage dir Bescheid, sobald dein\n"
+                        "Guthaben eingegangen ist! 🚀"
+                    )
                 )
-            )
+
         elif query.data == "start_signal_search":
             logger.info(f"Signal-Suche aktiviert von User {user_id}")
-            try:
-                # Füge Benutzer zu aktiven Nutzern hinzu
-                webhook_manager.active_users.add(user_id)
-                save_user_wallets()  # Speichere aktive Nutzer
-                logger.info(f"User {user_id} zu aktiven Nutzern hinzugefügt")
-
-                # Starte Signal Generator falls noch nicht aktiv
-                if not webhook_manager.signal_generator.is_running:
-                    logger.info("Starte Signal Generator...")
-                    webhook_manager.signal_generator.start()
-                    logger.info("Signal Generator erfolgreich gestartet")
-
-                # Bestätige die Aktivierung
-                query.message.reply_text(
-                    "✨ Perfect! Ich suche jetzt aktiv nach den besten Trading-Gelegenheiten für dich.\n\n"
-                    "Du erhältst automatisch eine Nachricht, sobald ich ein hochwertiges Signal gefunden habe.\n\n"
-                    "Status: 🟢 Signal Generator aktiv"
-                )
-
-            except Exception as e:
-                logger.error(f"Fehler beim Starten des Signal Generators: {str(e)}")
-                query.message.reply_text(
-                    "❌ Fehler beim Aktivieren der Signal-Suche.\n"
-                    "Bitte versuchen Sie es später erneut."
-                )
+            query.message.reply_text(
+                "✨ Perfect! Die Signal-Suche wird bald verfügbar sein.\n\n"
+                "Status: 🟡 In Vorbereitung"
+            )
 
     except Exception as e:
-        logger.error(f"Fehler im Button Handler: {e}")
+        logger.error(f"Fehler im Button Handler: {e}", exc_info=True)
         query.message.reply_text(
             "❌ Ein Fehler ist aufgetreten.\n"
             "Versuche es später erneut!"
@@ -254,29 +227,28 @@ def message_handler(update: Update, context: CallbackContext):
             "/wallet - Wallet anzeigen"
         )
     except Exception as e:
-        logger.error(f"Fehler im Message Handler: {e}")
+        logger.error(f"Fehler im Message Handler: {e}", exc_info=True)
 
 def error_handler(update: Update, context: CallbackContext):
     """Fehlerbehandlung für den Bot"""
     try:
         if context.error:
-            logger.error(f"Update {update} verursachte Fehler {context.error}")
+            logger.error(f"Update {update} verursachte Fehler {context.error}", exc_info=True)
     except Exception as e:
-        logger.error(f"Fehler im Error Handler: {e}")
+        logger.error(f"Fehler im Error Handler: {e}", exc_info=True)
 
 def save_user_wallets():
     """Speichert die User-Wallet-Daten"""
     try:
         data = {
             'wallets': user_wallets,
-            'private_keys': user_private_keys,
-            'active_users': list(webhook_manager.active_users) # Convert set to list for JSON serialization
+            'private_keys': user_private_keys
         }
         with open('user_wallets.json', 'w') as f:
             json.dump(data, f)
         logger.info("Wallet-Daten gespeichert")
     except Exception as e:
-        logger.error(f"Fehler beim Speichern der Wallet-Daten: {e}")
+        logger.error(f"Fehler beim Speichern der Wallet-Daten: {e}", exc_info=True)
 
 def load_user_wallets():
     """Lädt die User-Wallet-Daten"""
@@ -287,12 +259,9 @@ def load_user_wallets():
                 data = json.load(f)
                 user_wallets = data.get('wallets', {})
                 user_private_keys = data.get('private_keys', {})
-                if 'active_users' in data:
-                    webhook_manager.active_users = set(data['active_users'])
-
             logger.info("Wallet-Daten geladen")
     except Exception as e:
-        logger.error(f"Fehler beim Laden der Wallet-Daten: {e}")
+        logger.error(f"Fehler beim Laden der Wallet-Daten: {e}", exc_info=True)
         user_wallets = {}
         user_private_keys = {}
 
@@ -304,233 +273,38 @@ def cleanup():
             bot.delete_webhook()
         logger.info("Cleanup durchgeführt")
     except Exception as e:
-        logger.error(f"Fehler beim Cleanup: {e}")
+        logger.error(f"Fehler beim Cleanup: {e}", exc_info=True)
 
 atexit.register(cleanup)
-
-class WebhookManager:
-    def __init__(self):
-        self.active = False
-        self.last_check = 0
-        self.error_count = 0
-        self.max_retries = 3
-        self.check_interval = 300  # 5 Minuten
-        self.webhook_url = None
-        self.base_url = None
-        self.health_status = True
-        self.active_users = set()
-        self.signal_generator = None
-
-    def check_port_open(self, host, port):
-        """Überprüft ob ein Port erreichbar ist"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)
-        try:
-            result = sock.connect_ex((host, port))
-            return result == 0
-        finally:
-            sock.close()
-
-    def check_connectivity(self):
-        """Überprüft die Netzwerkverbindung"""
-        try:
-            if not self.check_port_open('0.0.0.0', 5000):
-                logger.error("Port 5000 ist nicht erreichbar")
-                return False
-
-            if not bot:
-                return False
-
-            # Prüfe Telegram API Verbindung
-            bot.get_me()
-            return True
-        except Exception as e:
-            logger.error(f"Konnektivitätsprüfung fehlgeschlagen: {e}")
-            return False
-
-    def get_replit_domain(self):
-        """Ermittelt die aktuelle Replit-Domain"""
-        try:
-            repl_owner = os.environ.get('REPL_OWNER')
-            repl_slug = os.environ.get('REPL_SLUG')
-            repl_id = os.environ.get('REPL_ID')
-
-            # Prüfe verschiedene Domain-Varianten
-            domains = [
-                f"{repl_slug}.{repl_owner}.repl.co",
-                f"{repl_id}.id.repl.co",
-                f"{repl_slug}.repl.co"
-            ]
-
-            for domain in domains:
-                if domain and self.validate_domain(domain):
-                    return f"https://{domain}"
-
-            return None
-        except Exception as e:
-            logger.error(f"Fehler bei Domain-Ermittlung: {e}")
-            return None
-
-    def validate_domain(self, domain):
-        """Validiert eine Domain"""
-        try:
-            # In Replit, we can't always resolve the domain but we know it exists
-            if '.repl.co' in domain:
-                return True
-            socket.gethostbyname(domain)
-            return True
-        except socket.gaierror:
-            return False
-
-    def setup_webhook(self):
-        """Richtet den Webhook ein"""
-        try:
-            if not self.check_connectivity():
-                logger.error("Keine Verbindung möglich")
-                return False
-
-            base_url = self.get_replit_domain()
-            if not base_url:
-                logger.error("Keine gültige Domain gefunden")
-                return False
-
-            webhook_url = f"{base_url}/{config.TELEGRAM_TOKEN}"
-            logger.info(f"Setze Webhook-URL: {webhook_url}")
-
-            # Lösche alten Webhook
-            bot.delete_webhook()
-            time.sleep(1)  # Warte kurz nach dem Löschen
-
-            # Setze neuen Webhook mit optimierten Einstellungen
-            bot.set_webhook(
-                url=webhook_url,
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                max_connections=40
-            )
-
-            # Verifiziere Setup
-            webhook_info = bot.get_webhook_info()
-            if webhook_info.url == webhook_url:
-                self.webhook_url = webhook_url
-                self.active = True
-                self.error_count = 0
-                self.health_status = True
-                logger.info("Webhook erfolgreich eingerichtet")
-                return True
-
-            logger.error("Webhook-URL stimmt nicht überein")
-            return False
-
-        except Exception as e:
-            logger.error(f"Fehler beim Webhook-Setup: {e}")
-            return False
-
-    def monitor(self):
-        """Überwacht den Webhook-Status"""
-        retry_delays = [5, 15, 30, 60, 300]
-        current_retry = 0
-
-        while True:
-            try:
-                # Prüfe Konnektivität und Webhook-Status
-                if not self.active or not self.check_connectivity():
-                    delay = retry_delays[min(current_retry, len(retry_delays) - 1)]
-                    logger.info(f"Webhook inaktiv, versuche Neustart in {delay} Sekunden")
-                    time.sleep(delay)
-
-                    if self.setup_webhook():
-                        current_retry = 0
-                        continue
-
-                    current_retry += 1
-                    continue
-
-                # Prüfe Webhook-Status
-                webhook_info = bot.get_webhook_info()
-                if (webhook_info.url != self.webhook_url or
-                    webhook_info.last_error_date or
-                    not self.check_connectivity()):
-                    logger.warning("Webhook-Problem erkannt")
-                    self.active = False
-                    self.health_status = False
-                    current_retry = 0
-                    continue
-
-                self.health_status = True
-                time.sleep(self.check_interval)
-
-            except Exception as e:
-                logger.error(f"Fehler bei Webhook-Überwachung: {e}")
-                self.health_status = False
-                time.sleep(60)
-
-webhook_manager = WebhookManager()
 
 @app.route('/' + config.TELEGRAM_TOKEN, methods=['POST'])
 def webhook():
     """Verarbeitet eingehende Webhook-Anfragen"""
     try:
-        if not webhook_manager.active:
-            return jsonify({'error': 'Webhook nicht aktiv'}), 503
-
         json_data = request.get_json()
         update = Update.de_json(json_data, bot)
         dispatcher.process_update(update)
         return 'ok'
     except Exception as e:
-        logger.error(f"Fehler bei Webhook-Verarbeitung: {e}")
+        logger.error(f"Fehler bei Webhook-Verarbeitung: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/health')
-def health_check():
-    """Health Check Endpoint"""
+@app.route('/')
+def root():
+    """Root route to confirm server is running"""
     try:
-        status = {
-            'status': 'healthy' if webhook_manager.health_status else 'degraded',
-            'bot_info': get_bot_info(),
-            'webhook_url': webhook_manager.webhook_url,
-            'error_count': webhook_manager.error_count,
-            'last_check': webhook_manager.last_check,
-            'connectivity': webhook_manager.check_connectivity()
-        }
-
-        return jsonify(status)
-
+        me = bot.get_me() if bot else None
+        return jsonify({
+            'status': 'running',
+            'message': 'Solana Trading Bot Server is running',
+            'bot_info': me.username if me else None
+        })
     except Exception as e:
-        logger.error(f"Fehler beim Health Check: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        logger.error(f"Fehler in root route: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
-def main():
-    """Hauptfunktion"""
-    try:
-        # Starte Webhook-Monitor in separatem Thread
-        if not setup_bot():
-            logger.error("Bot setup failed. Exiting.")
-            return
-
-        monitor_thread = threading.Thread(target=webhook_manager.monitor, daemon=True)
-        monitor_thread.start()
-        logger.info("Webhook-Monitor gestartet")
-
-        # Initialer Webhook-Setup
-        if not webhook_manager.setup_webhook():
-            logger.error("Initialer Webhook-Setup fehlgeschlagen")
-            # Wird vom Monitor automatisch wiederholt
-
-        # Starte Flask Server
-        app.run(
-            host='0.0.0.0',
-            port=5000,
-            debug=False,
-            use_reloader=False,
-            threaded=True
-        )
-
-    except Exception as e:
-        logger.error(f"Fataler Fehler: {e}")
-        cleanup()
-        raise
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5000)

@@ -47,6 +47,10 @@ args = "Test Suite"
 task = "workflow.run"
 args = "Webhook Bot"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Flask Server"
+
 [[workflows.workflow]]
 name = "Solana Trading Bot"
 author = "agent"
@@ -59,7 +63,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python bot.py"
+args = "gunicorn -c gunicorn_config.py wsgi:app"
 
 [[workflows.workflow]]
 name = "Test AI Engine"
@@ -171,12 +175,31 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "gunicorn -c gunicorn_config.py wsgi:app"
+args = "gunicorn -c gunicorn_config.py wsgi:app --preload"
+waitForPort = 5000
+
+[[workflows.workflow]]
+name = "Flask Server"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python wsgi.py"
 waitForPort = 5000
 
 [deployment]
-run = ["sh", "-c", "gunicorn -c gunicorn_config.py wsgi:app"]
+run = ["sh", "-c", "gunicorn -c gunicorn_config.py wsgi:app --preload"]
 
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080

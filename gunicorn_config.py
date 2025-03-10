@@ -2,7 +2,7 @@
 import multiprocessing
 
 # Server Socket
-bind = "0.0.0.0:8080"
+bind = "0.0.0.0:5000"  # Explizit Port 5000 verwenden
 backlog = 2048
 
 # Ensure application is properly accessible
@@ -10,7 +10,7 @@ forwarded_allow_ips = '*'
 secure_scheme_headers = {'X-Forwarded-Proto': 'https'}
 
 # Worker Prozesse
-workers = multiprocessing.cpu_count()
+workers = 1  # Reduziert auf einen Worker für Debugging
 worker_class = "sync"
 worker_connections = 1000
 timeout = 120
@@ -19,7 +19,7 @@ keepalive = 65
 # Logging
 accesslog = "access.log"
 errorlog = "error.log"
-loglevel = "info"
+loglevel = "debug"  # Erhöhtes Log-Level für bessere Fehleranalyse
 capture_output = True
 enable_stdio_inheritance = True
 
