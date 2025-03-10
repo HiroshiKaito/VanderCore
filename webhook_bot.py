@@ -253,6 +253,8 @@ def webhook():
     """Verarbeitet eingehende Webhook-Anfragen"""
     try:
         json_data = request.get_json()
+        logger.debug(f"Webhook-Anfrage empfangen: {json_data}")
+
         update = Update.de_json(json_data, bot)
         dispatcher.process_update(update)
         return 'ok'
