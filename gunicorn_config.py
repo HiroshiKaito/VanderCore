@@ -2,7 +2,7 @@
 import multiprocessing
 
 # Server Socket
-bind = "0.0.0.0:5000"
+bind = "0.0.0.0:8080"
 backlog = 2048
 
 # Ensure application is properly accessible

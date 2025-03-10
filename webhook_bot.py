@@ -270,7 +270,7 @@ def save_user_wallets():
         data = {
             'wallets': user_wallets,
             'private_keys': user_private_keys,
-            'active_users': webhook_manager.active_users
+            'active_users': list(webhook_manager.active_users) # Convert set to list for JSON serialization
         }
         with open('user_wallets.json', 'w') as f:
             json.dump(data, f)
@@ -374,6 +374,9 @@ class WebhookManager:
     def validate_domain(self, domain):
         """Validiert eine Domain"""
         try:
+            # In Replit, we can't always resolve the domain but we know it exists
+            if '.repl.co' in domain:
+                return True
             socket.gethostbyname(domain)
             return True
         except socket.gaierror:
