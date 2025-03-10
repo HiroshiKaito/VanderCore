@@ -8,7 +8,7 @@ from flask import Flask, jsonify, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     CommandHandler, CallbackContext, CallbackQueryHandler,
-    MessageHandler, Filters, Dispatcher
+    Dispatcher
 )
 from config import config
 from wallet_manager import WalletManager
@@ -79,12 +79,29 @@ def setup_bot():
             webhook_url = f"https://{replit_domain}.replit.app/{config.TELEGRAM_TOKEN}"
             logger.info(f"Setze Webhook URL: {webhook_url}")
 
-            # Lösche alten Webhook und setze neuen
-            bot.delete_webhook()
-            bot.set_webhook(webhook_url)
+            try:
+                # Lösche alten Webhook
+                bot.delete_webhook()
 
-            webhook_info = bot.get_webhook_info()
-            logger.info(f"Webhook Status: URL={webhook_info.url}")
+                # Setze neuen Webhook mit max_connections Parameter
+                bot.set_webhook(
+                    url=webhook_url,
+                    allowed_updates=Update.ALL_TYPES,
+                    max_connections=100,
+                    drop_pending_updates=True
+                )
+
+                # Überprüfe Webhook-Status
+                webhook_info = bot.get_webhook_info()
+                logger.info(f"Webhook Status: URL={webhook_info.url}, Pending Updates={webhook_info.pending_update_count}")
+
+                if webhook_info.url != webhook_url:
+                    logger.error(f"Webhook URL stimmt nicht überein: {webhook_info.url} != {webhook_url}")
+                    return False
+
+            except Exception as e:
+                logger.error(f"Fehler beim Setzen des Webhooks: {e}", exc_info=True)
+                return False
 
         logger.info("Bot-Initialisierung erfolgreich abgeschlossen")
         return True
@@ -139,6 +156,7 @@ def button_handler(update: Update, context: CallbackContext):
 
     try:
         query.answer()  # Bestätige den Button-Click
+        logger.info(f"Button Click von User {user_id}: {query.data}")
 
         if query.data == "create_wallet":
             # Erstelle neue Wallet
@@ -184,34 +202,6 @@ def button_handler(update: Update, context: CallbackContext):
             "Versuche es später erneut!"
         )
 
-def save_user_wallets():
-    """Speichert die User-Wallet-Daten"""
-    try:
-        data = {
-            'wallets': user_wallets,
-            'private_keys': user_private_keys
-        }
-        with open('user_wallets.json', 'w') as f:
-            json.dump(data, f)
-        logger.info("Wallet-Daten gespeichert")
-    except Exception as e:
-        logger.error(f"Fehler beim Speichern der Wallet-Daten: {e}", exc_info=True)
-
-def load_user_wallets():
-    """Lädt die User-Wallet-Daten"""
-    global user_wallets, user_private_keys
-    try:
-        if os.path.exists('user_wallets.json'):
-            with open('user_wallets.json', 'r') as f:
-                data = json.load(f)
-                user_wallets = data.get('wallets', {})
-                user_private_keys = data.get('private_keys', {})
-            logger.info("Wallet-Daten geladen")
-    except Exception as e:
-        logger.error(f"Fehler beim Laden der Wallet-Daten: {e}", exc_info=True)
-        user_wallets = {}
-        user_private_keys = {}
-
 def wallet_command(update: Update, context: CallbackContext):
     """Handler für den /wallet Befehl"""
     try:
@@ -248,12 +238,44 @@ def wallet_command(update: Update, context: CallbackContext):
             "Versuche es später erneut!"
         )
 
+def save_user_wallets():
+    """Speichert die User-Wallet-Daten"""
+    try:
+        data = {
+            'wallets': user_wallets,
+            'private_keys': user_private_keys
+        }
+        with open('user_wallets.json', 'w') as f:
+            json.dump(data, f)
+        logger.info("Wallet-Daten gespeichert")
+    except Exception as e:
+        logger.error(f"Fehler beim Speichern der Wallet-Daten: {e}", exc_info=True)
+
+def load_user_wallets():
+    """Lädt die User-Wallet-Daten"""
+    global user_wallets, user_private_keys
+    try:
+        if os.path.exists('user_wallets.json'):
+            with open('user_wallets.json', 'r') as f:
+                data = json.load(f)
+                user_wallets = data.get('wallets', {})
+                user_private_keys = data.get('private_keys', {})
+            logger.info("Wallet-Daten geladen")
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Wallet-Daten: {e}", exc_info=True)
+        user_wallets = {}
+        user_private_keys = {}
+
 @app.route('/' + config.TELEGRAM_TOKEN, methods=['POST'])
 def webhook():
     """Verarbeitet eingehende Webhook-Anfragen"""
     try:
         json_data = request.get_json()
         logger.debug(f"Webhook-Anfrage empfangen: {json_data}")
+
+        if not json_data:
+            logger.error("Keine JSON-Daten in der Webhook-Anfrage")
+            return jsonify({'error': 'No JSON data'}), 400
 
         update = Update.de_json(json_data, bot)
         dispatcher.process_update(update)
